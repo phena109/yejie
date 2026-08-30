@@ -1,56 +1,30 @@
 import { type Prop, type Terrain, type Tile, key } from "./types";
 
-export const MAP_W = 10;
-export const MAP_H = 12;
-
-const HEIGHT_ROWS = [
-  "2222222222",
-  "2222222222",
-  "2211111122",
-  "0011111100",
-  "0000000000",
-  "0000000000",
-  "0000000000",
-  "0000000000",
-  "2110000112",
-  "2200000022",
-  "2200000022",
-  "0000000000",
-];
-
-const BLOCKED: Array<[number, number, Prop]> = [
-  [1, 1, "ac"],
-  [8, 1, "ac"],
-  [1, 10, "ac"],
-  [8, 10, "ac"],
-  [1, 5, "stall"],
-  [2, 5, "stall"],
-  [6, 5, "stall"],
-  [7, 5, "stall"],
-  [3, 7, "stall"],
-  [4, 7, "stall"],
-];
-
-const LAMPS: Array<[number, number]> = [
-  [0, 6],
-  [9, 6],
-  [5, 4],
-];
+export interface MapDef {
+  w: number;
+  h: number;
+  heights: string[];
+  blocked: Array<[number, number, Prop]>;
+  lamps?: Array<[number, number]>;
+}
 
 export class GameMap {
-  readonly w = MAP_W;
-  readonly h = MAP_H;
+  readonly w: number;
+  readonly h: number;
   readonly tiles: Tile[][] = [];
 
-  constructor() {
+  constructor(def: MapDef) {
+    this.w = def.w;
+    this.h = def.h;
     const block = new Map<string, Prop>();
-    for (const [x, y, p] of BLOCKED) block.set(key(x, y), p);
-    const lamps = new Set(LAMPS.map(([x, y]) => key(x, y)));
+    for (const [x, y, p] of def.blocked) block.set(key(x, y), p);
+    const lamps = new Set((def.lamps ?? []).map(([x, y]) => key(x, y)));
 
-    for (let y = 0; y < MAP_H; y++) {
+    for (let y = 0; y < def.h; y++) {
       const row: Tile[] = [];
-      for (let x = 0; x < MAP_W; x++) {
-        const height = Number(HEIGHT_ROWS[y][x]);
+      const line = def.heights[y] ?? "";
+      for (let x = 0; x < def.w; x++) {
+        const height = Number(line[x] ?? "0");
         let terrain: Terrain = "street";
         if (height === 2) terrain = "roof";
         else if (height === 1) terrain = "stairs";
@@ -60,7 +34,7 @@ export class GameMap {
           y,
           h: height,
           terrain,
-          blocked: prop === "stall" || prop === "ac",
+          blocked: prop === "stall" || prop === "ac" || prop === "crate",
           prop,
         });
       }

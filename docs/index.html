@@ -10,13 +10,13 @@
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <meta name="mobile-web-app-capable" content="yes" />
-    <meta name="description" content="夜界 — 國王碼頭夜市。夜班出勤。" />
+    <meta name="description" content="夜界 — 國王碼頭。夜班出勤。" />
     <link rel="manifest" href="./manifest.webmanifest" />
     <link rel="icon" href="./icon.svg" type="image/svg+xml" />
     <link rel="apple-touch-icon" href="./icon.svg" />
     <title>夜界</title>
-    <script type="module" crossorigin src="./assets/index-C_05taJY.js"></script>
-    <link rel="stylesheet" crossorigin href="./assets/index-C5TptI-h.css">
+    <script type="module" crossorigin src="./assets/index-C9AvL2gw.js"></script>
+    <link rel="stylesheet" crossorigin href="./assets/index-BjbxRwbx.css">
   </head>
   <body>
     <div id="app">
@@ -36,6 +36,7 @@
         <div id="chip-body">
           <div id="chip-name"></div>
           <div id="chip-meta"></div>
+          <div id="chip-extra" hidden></div>
           <div id="chip-hp"><i id="chip-hp-fill"></i></div>
         </div>
       </div>
@@ -45,6 +46,7 @@
       <div id="forecast" hidden></div>
       <div id="log"></div>
 
+      <button id="btn-rotate" type="button" hidden>旋轉</button>
       <button id="btn-end" type="button" hidden>結束回合</button>
 
       <nav id="dock">
@@ -59,20 +61,22 @@
       <div id="briefing-card">
         <p class="eyebrow">現場簡報</p>
         <h1>夜界</h1>
-        <h2>任務 01</h2>
-        <p class="loc">國王碼頭夜市・屋頂</p>
+        <h2 id="brief-num">任務 01</h2>
+        <p class="loc" id="brief-loc">國王碼頭夜市・屋頂</p>
         <div class="rule"></div>
-        <p>
-          這座城市看起來很普通。夜間公車、打烊很晚的市場、警察無線電。一個自稱 Assembly 的私人團體，長期把魔法排除在紀錄之外。他們換了新主席。舊規矩是藏起來。新規矩是先拿下這座城市，再拿下其他地方。
-        </p>
-        <p>
-          你是夜班警員 Mara Ellison。不是特勤單位，也不是什麼重要人物。你只是會早一秒發現事情，這讓你還有點用，但不足以讓人聽你的。今晚有人報案，說市場屋頂上有騷動。你去了。你的搭檔 Dana Ruiz 也去了。市場急救員 Priya Shah 不肯離開。屋頂上，一群沒穿制服的人把街道標得像棋盤。他們本來就不打算讓目擊者走掉。
-        </p>
-        <ul class="conds">
+        <div id="brief-body">
+          <p>
+            這座城市看起來很普通。夜間公車、打烊很晚的市場、警察無線電。一個自稱 Assembly 的私人團體，長期把魔法排除在紀錄之外。他們換了新主席。舊規矩是藏起來。新規矩是先拿下這座城市，再拿下其他地方。
+          </p>
+          <p>
+            你是夜班警員 Mara Ellison。不是特勤單位，也不是什麼重要人物。你只是會早一秒發現事情，這讓你還有點用，但不足以讓人聽你的。今晚有人報案，說市場屋頂上有騷動。你去了。你的搭檔 Dana Ruiz 也去了。市場急救員 Priya Shah 不肯離開。屋頂上，一群沒穿制服的人把街道標得像棋盤。他們本來就不打算讓目擊者走掉。這只是很多場裡的一場，本來應該安靜做完。
+          </p>
+        </div>
+        <ul class="conds" id="brief-conds">
           <li><span>勝利</span>擊敗 Crosby</li>
           <li><span>失敗</span>三人全部倒下</li>
         </ul>
-        <div class="voices">
+        <div class="voices" id="brief-voices">
           <p><b>Mara</b>「屋頂上有人。不是穿制服的。」</p>
           <p><b>Dana</b>「我跟你上去。」</p>
           <p><b>Priya</b>「有人受傷的話，我不走。」</p>
@@ -86,6 +90,7 @@
         <p id="result-kicker"></p>
         <h2 id="result-title"></h2>
         <p id="result-body"></p>
+        <button id="btn-next" type="button" hidden>下一場</button>
         <button id="btn-restart" type="button">再戰</button>
       </div>
     </section>

@@ -14,6 +14,7 @@ export function planEnemy(
   unit: Unit,
   map: GameMap,
   units: Unit[],
+  protectId?: string,
 ): AiPlan {
   const field = computeMoveRange(unit, map, units);
   const players = units.filter((u) => !u.dead && u.team === "player");
@@ -27,6 +28,7 @@ export function planEnemy(
       const { dmg, face, dh } = strikeDamage(ghost, p, map);
       let score = dmg * 10 + (p.hp <= dmg ? 80 : 0);
       if (p.role === "support") score += 6;
+      if (p.id === protectId) score += 24;
       if (face === "back") score += 8;
       if (dh > 0) score += 4;
       if (unit.role === "elite") score += 2;
@@ -52,6 +54,7 @@ export function planEnemy(
       const dist = Math.abs(d.x - p.x) + Math.abs(d.y - p.y);
       const drop = map.heightAt(unit.x, unit.y) - map.heightAt(d.x, d.y);
       let score = dist;
+      if (p.id === protectId) score -= 2;
       if (unit.role === "elite" && drop > 0) score += 1.4;
       if (score < bestDist) {
         bestDist = score;

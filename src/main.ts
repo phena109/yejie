@@ -6,12 +6,10 @@ if (!(canvas instanceof HTMLCanvasElement)) throw new Error("board");
 
 const game = new Game(canvas);
 game.start();
+game.applyHash();
 
-if (location.hash === "#play") {
-  document.getElementById("btn-start")?.click();
-}
-
-if ("serviceWorker" in navigator) {
+const shot = location.search.includes("shot");
+if ("serviceWorker" in navigator && !shot) {
   window.addEventListener("load", () => {
     void navigator.serviceWorker.register("./sw.js");
   });

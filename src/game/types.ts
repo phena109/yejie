@@ -1,13 +1,13 @@
 export type Team = "player" | "enemy";
-export type Role = "striker" | "controller" | "support" | "grunt" | "elite";
+export type Role = "striker" | "controller" | "support" | "grunt" | "elite" | "civilian";
 export type Terrain = "street" | "stairs" | "roof";
 export type Dir = 0 | 1 | 2 | 3;
-export type Prop = "stall" | "ac" | "lamp";
+export type Prop = "stall" | "ac" | "lamp" | "crate";
+export type Yaw = 0 | 1 | 2 | 3;
 
 export type Phase =
   | "briefing"
   | "select"
-  | "moved"
   | "skillAim"
   | "forecast"
   | "enemy"
@@ -41,6 +41,9 @@ export interface Unit {
   skipNext: boolean;
   dead: boolean;
   lunge: number;
+  movedThisTurn: boolean;
+  actedThisTurn: boolean;
+  npc: boolean;
 }
 
 export interface Tile {
@@ -73,6 +76,10 @@ export interface FloatText {
   life: number;
 }
 
+export type Inspect =
+  | { kind: "unit"; unit: Unit }
+  | { kind: "tile"; tile: Tile };
+
 export const DIRS: Vec2[] = [
   { x: 0, y: -1 },
   { x: 1, y: 0 },
@@ -102,4 +109,35 @@ export function manhattan(a: Vec2, b: Vec2): number {
 
 export function delay(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
+}
+
+/** Rotate grid coords 90° CW per yaw step so iso diamonds and hit-tests stay aligned. */
+export function yawPoint(x: number, y: number, yaw: Yaw, w: number, h: number): Vec2 {
+  switch (yaw) {
+    case 0:
+      return { x, y };
+    case 1:
+      return { x: y, y: w - 1 - x };
+    case 2:
+      return { x: w - 1 - x, y: h - 1 - y };
+    case 3:
+      return { x: h - 1 - y, y: x };
+  }
+}
+
+export function yawDir(dx: number, dy: number, yaw: Yaw): Vec2 {
+  switch (yaw) {
+    case 0:
+      return { x: dx, y: dy };
+    case 1:
+      return { x: dy, y: -dx };
+    case 2:
+      return { x: -dx, y: -dy };
+    case 3:
+      return { x: -dy, y: dx };
+  }
+}
+
+export function nextYaw(yaw: Yaw): Yaw {
+  return ((yaw + 1) % 4) as Yaw;
 }

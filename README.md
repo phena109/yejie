@@ -14,45 +14,60 @@ Open the local URL on a phone or a desktop window about 390 by 844.
 
 This build is a PWA (manifest plus service worker). No account, no backend, no ads.
 
+GitHub Pages serves `docs/`.
+
 ## Design lock
 
 Setting: an ordinary English-speaking city. Night buses, a late-closing market, police radios. Magic has been kept off the books for a long time by a private group that calls itself the Assembly. They have a new Chair. The old rule was hide. The new rule is take this city first, then the rest.
 
-Player: Constable Mara Ellison, night shift. Not a specialist unit, not anyone important. She notices things a second early.
+They are not running one special operation. The original plan should have been finished ages ago, quietly. Government has not noticed because they start by replacing local gangs, so it looks like the same street crime, and they assassinate key government members who actually have power, not figureheads.
 
-Mission 01: a call about a disturbance on a King's Wharf market roof (國王碼頭夜市). Partner Dana Ruiz goes. Market first-aider Priya Shah will not leave. On the roof, people with no uniforms are marking the street like a game board.
+Player: Constable Mara Ellison, night shift. Not a specialist unit, not anyone important. She notices things a second early. She and the people with her ran into one of many conquering actions.
+
+Mission 01: a call about a disturbance on a King's Wharf market roof (國王碼頭夜市). Partner Dana Ruiz goes. Market first-aider Priya Shah will not leave. On the roof, people with no uniforms are marking the street like a game board. This roof job is one of many. It should have stayed quiet.
 
 Win: defeat Crosby (the person in charge on site). Remaining field people can leave.
 
 Lose: all three player units down.
 
-View: orthogonal ~45° isometric. Diamond tiles. Height as stacked blocks (street / stairs / roof). Canvas 2.5D only.
+Mission 02: a shooting call in gang territory on the King's Wharf back streets. It looks like gangs fighting. It is the Assembly replacing a local crew and removing Deputy Harbour Chief Rowan Hale, who actually controls port licenses. Mara, Dana, Priya are sent because it is a night-shift shooting, not because they are chosen. HP is restored for this fight.
+
+Win: defeat Beckett. Rowan Hale must still be alive.
+
+Lose: all three player units down, or Rowan Hale dies.
+
+View: orthogonal ~45° isometric. Diamond tiles. Height as stacked blocks (street / stairs / roof). Canvas 2.5D only. Four yaw facings, 90° snap, via 旋轉. Pan and pinch stay. Hit-testing follows the current yaw.
+
+Inspect: tap terrain or a unit you did not pick as actor. Terrain shows name, height, walkable/blocked, street/stairs/roof, and any prop (stall, A/C, crate, lamp). Units show name, role, HP, atk/def/move/jump, skill name plus one line, and team. Cancel or tap empty UI dismisses inspect. Selecting your own unit for orders still works.
+
+Turn: Final Fantasy Tactics style. Move and Act are independent. You may act in place without moving, including 待機. You may move after acting. You may move then act. You may skip one of them. The unit turn ends on 待機, or when both Move and Act are used, or on 結束 after a partial turn. Undo still undoes the last uncommitted step. Attack, skill, and wait do not require a move first.
 
 Skills: usable once per that unit's turn, not once per battle. `skillUsed` resets when the unit can act again.
 
-Tactics are not dumbed down for mobile. Elevation, jump, climb cost, melee height limit, side and back damage, confirm/cancel, and undo-move-before-action stay. The only mobile compromise is the control scheme: tap, drag, pinch, large dock buttons, no hover, no right-click.
+Tactics are not dumbed down for mobile. Elevation, jump, climb cost, melee height limit, side and back damage, confirm/cancel, and undo of an uncommitted move stay. The only mobile compromise is the control scheme: tap, drag, pinch, large dock buttons, no hover, no right-click.
 
-Language: people in the world speak English. Traditional Chinese is convenience UI only — a plain translation. Unit names are English. UI verbs are ordinary 繁中 (移動, 攻擊, 確認, 取消, 待機, 結束回合, 傷害, 勝利, 失敗). Skill names: 重擊, 攔住, 包紮.
+Language: people in the world speak English. Traditional Chinese is convenience UI only — a plain translation. Unit names are English. UI verbs are ordinary 繁中 (移動, 攻擊, 確認, 取消, 待機, 結束, 結束回合, 旋轉, 傷害, 勝利, 失敗, 下一場). Skill names: 重擊, 攔住, 包紮.
 
 ## Roster
 
 - Mara Ellison, constable, striker. Move 5, Jump 2. Can vault from street onto roof. Skill 重擊: heavy melee with extra height.
 - Dana Ruiz, partner, controller. Move 4, Jump 1. Needs stairs. Skill 攔住: target skips their next turn, plus chip damage.
 - Priya Shah, market first-aider, support. Move 4, Jump 1. Skill 包紮: heal an adjacent ally or self.
-- Enemies: Assembly field people (Hale, Cole, Nash, Pike, Voss) plus Crosby on the north roof.
+- Mission 01 enemies: Assembly field people (Neil, Cole, Nash, Pike, Voss) plus Crosby on the north roof.
+- Mission 02: Deputy Harbour Chief Rowan Hale (NPC to protect) on the loading bay. Site lead Beckett plus Drake, Quinn, Moss, Reed, Shaw.
 
 ## What is in the slice
 
-- One 10 by 12 map: street height 0, stairs height 1, rooftop height 2, market stalls and rooftop A/C as blocked props.
-- Full flow: briefing, fight, victory or defeat, restart.
-- Select unit, show move range, move, show action range, attack or skill or wait, next unit, end turn, enemy AI.
-- Cancel undoes the move before an action is confirmed. Tap an in-range enemy to preview damage, Confirm to strike.
-- Camera starts on the player team. Drag to pan. Pinch to zoom.
-- Original canvas art: wet asphalt, market stalls, rooftop units, isometric diamonds. No copyrighted assets.
+- Two maps, each 10 by 12. Mission 01: street height 0, stairs height 1, rooftop height 2, market stalls and rooftop A/C as blocked props. Mission 02: alley, loading bay, fire-escape height, crates.
+- Full flow: briefing, fight, victory or defeat, 下一場 into mission 02, restart.
+- Select unit, show move and attack ranges together when both remain. Act in place, move after acting, or skip one. Wait ends the unit. Both used ends the unit. 結束回合 ends the player phase.
+- Tap a unit or tile to inspect. Tap an in-range enemy to preview damage, Confirm to strike.
+- Camera starts on the player team. Drag to pan. Pinch to zoom. 旋轉 snaps 90°.
+- Original canvas art: wet asphalt, market stalls, crates, rooftop units, isometric diamonds. No copyrighted assets.
 
 ## What was cut on purpose
 
-- Extra classes, extra maps, jobs, loot, gacha, accounts.
+- Extra classes, extra maps beyond the two, jobs, loot, gacha, accounts.
 - No keyboard-first UI. Wheel zoom is a desktop debug extra only.
 
 See package.json scripts: install, dev, build, preview.

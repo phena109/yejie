@@ -1,6 +1,6 @@
 import type { GameMap } from "./map";
-import type { FloatText, Phase, Tile, Unit, Vec2 } from "./types";
-import { DIRS, key } from "./types";
+import type { FloatText, Phase, Tile, Unit, Vec2, Yaw } from "./types";
+import { DIRS, key, nextYaw, yawDir, yawPoint } from "./types";
 
 /** Diamond width (2:1 orthogonal isometric). */
 export const TILE_W = 64;
@@ -76,6 +76,9 @@ export class Renderer {
   w = 390;
   h = 700;
   time = 0;
+  yaw: Yaw = 0;
+  private mapW = 10;
+  private mapH = 12;
 
   constructor(canvas: HTMLCanvasElement) {
     this.canvas = canvas;
@@ -95,8 +98,18 @@ export class Renderer {
     this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   }
 
+  private syncMap(map: GameMap): void {
+    this.mapW = map.w;
+    this.mapH = map.h;
+  }
+
+  isoOf(gx: number, gy: number, h = 0): Vec2 {
+    const p = yawPoint(gx, gy, this.yaw, this.mapW, this.mapH);
+    return iso(p.x, p.y, h);
+  }
+
   worldToScreen(x: number, y: number, h = 0): Vec2 {
-    const p = iso(x, y, h);
+    const p = this.isoOf(x, y, h);
     return {
       x: (p.x - this.cam.x) * this.cam.zoom + this.w / 2,
       y: (p.y - this.cam.y) * this.cam.zoom + this.h / 2,
@@ -114,15 +127,25 @@ export class Renderer {
     };
   }
 
+  private cellsInDrawOrder(map: GameMap): Vec2[] {
+    const cells: Vec2[] = [];
+    for (let y = 0; y < map.h; y++) {
+      for (let x = 0; x < map.w; x++) cells.push({ x, y });
+    }
+    cells.sort((a, b) => {
+      const aa = yawPoint(a.x, a.y, this.yaw, map.w, map.h);
+      const bb = yawPoint(b.x, b.y, this.yaw, map.w, map.h);
+      return aa.x + aa.y - (bb.x + bb.y);
+    });
+    return cells;
+  }
+
   hitTile(sx: number, sy: number, map: GameMap): Vec2 | null {
+    this.syncMap(map);
     let hit: Vec2 | null = null;
-    for (let d = 0; d < map.w + map.h - 1; d++) {
-      for (let x = 0; x < map.w; x++) {
-        const y = d - x;
-        if (y < 0 || y >= map.h) continue;
-        const t = map.tiles[y][x];
-        if (this.hitPrism(sx, sy, t)) hit = { x, y };
-      }
+    for (const c of this.cellsInDrawOrder(map)) {
+      const t = map.tiles[c.y][c.x];
+      if (this.hitPrism(sx, sy, t)) hit = c;
     }
     return hit;
   }
@@ -145,13 +168,24 @@ export class Renderer {
     return pointInQuad(sx, sy, left[0], left[1], left[2], left[3]) || pointInQuad(sx, sy, right[0], right[1], right[2], right[3]);
   }
 
+  rotate(map: GameMap): void {
+    this.syncMap(map);
+    const focus = this.hitTile(this.w / 2, this.h / 2, map) ?? { x: Math.floor(map.w / 2), y: Math.floor(map.h / 2) };
+    this.yaw = nextYaw(this.yaw);
+    const h = map.heightAt(focus.x, focus.y);
+    const p = this.isoOf(focus.x, focus.y, h);
+    this.cam.x = p.x;
+    this.cam.y = p.y - 24;
+  }
+
   centerOn(units: Unit[], map: GameMap): void {
-    const living = units.filter((u) => !u.dead && u.team === "player");
+    this.syncMap(map);
+    const living = units.filter((u) => !u.dead && u.team === "player" && !u.npc);
     if (!living.length) return;
     let x = 0;
     let y = 0;
     for (const u of living) {
-      const p = iso(u.x, u.y, map.heightAt(u.x, u.y));
+      const p = this.isoOf(u.x, u.y, map.heightAt(u.x, u.y));
       x += p.x;
       y += p.y;
     }
@@ -169,11 +203,13 @@ export class Renderer {
       skill: Set<string>;
       selected: Unit | null;
       target: Unit | null;
+      inspect: Vec2 | null;
       phase: Phase;
     },
     floats: FloatText[],
   ): void {
     const ctx = this.ctx;
+    this.syncMap(map);
     this.time += 16;
     ctx.clearRect(0, 0, this.w, this.h);
     this.drawBackdrop();
@@ -184,14 +220,10 @@ export class Renderer {
       byTile.set(key(u.x, u.y), u);
     }
 
-    for (let d = 0; d < map.w + map.h - 1; d++) {
-      for (let x = 0; x < map.w; x++) {
-        const y = d - x;
-        if (y < 0 || y >= map.h) continue;
-        this.drawTile(map.tiles[y][x], overlays);
-        const u = byTile.get(key(x, y));
-        if (u) this.drawUnit(u, map, overlays);
-      }
+    for (const c of this.cellsInDrawOrder(map)) {
+      this.drawTile(map.tiles[c.y][c.x], overlays);
+      const u = byTile.get(key(c.x, c.y));
+      if (u) this.drawUnit(u, map, overlays);
     }
 
     this.drawVignette();
@@ -217,7 +249,10 @@ export class Renderer {
     ctx.restore();
   }
 
-  private drawTile(t: Tile, overlays: { move: Set<string>; action: Set<string>; skill: Set<string> }): void {
+  private drawTile(
+    t: Tile,
+    overlays: { move: Set<string>; action: Set<string>; skill: Set<string>; inspect: Vec2 | null },
+  ): void {
     const ctx = this.ctx;
     const { cx, cy, hw, hh, drop } = this.topMetrics(t.x, t.y, t.h);
     const k = key(t.x, t.y);
@@ -299,7 +334,7 @@ export class Renderer {
       ctx.lineWidth = 1;
       for (let i = 1; i <= 3; i++) {
         const t0 = i / 4;
-        const y0 = cy - hh + (hh * 2) * t0;
+        const y0 = cy - hh + hh * 2 * t0;
         const half = hw * (1 - Math.abs(1 - 2 * t0));
         ctx.beginPath();
         ctx.moveTo(cx - half, y0);
@@ -329,6 +364,12 @@ export class Renderer {
       ctx.fillStyle = "rgba(180, 140, 255, 0.36)";
       ctx.fill();
       ctx.strokeStyle = "rgba(200, 170, 255, 0.95)";
+      ctx.stroke();
+    }
+    if (overlays.inspect && overlays.inspect.x === t.x && overlays.inspect.y === t.y) {
+      this.diamondPath(cx, cy, hw * 0.96, hh * 0.96);
+      ctx.strokeStyle = "rgba(255, 232, 160, 0.95)";
+      ctx.lineWidth = 2;
       ctx.stroke();
     }
   }
@@ -371,6 +412,32 @@ export class Renderer {
       ctx.font = `bold ${Math.max(8, 9 * z)}px sans-serif`;
       ctx.textAlign = "center";
       ctx.fillText(t.x < 5 ? "FISH" : "TEA", cx, cy - 2 * z);
+    } else if (t.prop === "crate") {
+      const ph = 12 * z;
+      ctx.beginPath();
+      ctx.moveTo(cx - hw * 0.48, cy);
+      ctx.lineTo(cx, cy + hh * 0.48);
+      ctx.lineTo(cx, cy + hh * 0.48 + ph);
+      ctx.lineTo(cx - hw * 0.48, cy + ph);
+      ctx.closePath();
+      ctx.fillStyle = "#5a3a22";
+      ctx.fill();
+      ctx.beginPath();
+      ctx.moveTo(cx + hw * 0.48, cy);
+      ctx.lineTo(cx, cy + hh * 0.48);
+      ctx.lineTo(cx, cy + hh * 0.48 + ph);
+      ctx.lineTo(cx + hw * 0.48, cy + ph);
+      ctx.closePath();
+      ctx.fillStyle = "#6c4628";
+      ctx.fill();
+      this.diamondPath(cx, cy - 2 * z, hw * 0.48, hh * 0.48);
+      ctx.fillStyle = "#8a5a32";
+      ctx.fill();
+      ctx.strokeStyle = "rgba(40, 22, 10, 0.55)";
+      ctx.beginPath();
+      ctx.moveTo(cx - hw * 0.2, cy);
+      ctx.lineTo(cx + hw * 0.2, cy);
+      ctx.stroke();
     } else if (t.prop === "ac") {
       const ph = 10 * z;
       ctx.beginPath();
@@ -420,12 +487,14 @@ export class Renderer {
     const p = this.worldToScreen(u.x, u.y, h);
     const z = this.cam.zoom;
     const elite = u.role === "elite";
-    const scale = (elite ? 1.18 : 1) * z;
+    const npc = u.npc || u.role === "civilian";
+    const scale = (elite ? 1.18 : npc ? 1.05 : 1) * z;
     const friend = u.team === "player";
-    const body = friend ? "#12343a" : elite ? "#2a1020" : "#3a1418";
-    const accent = friend ? "#3ef0d0" : elite ? "#ffc857" : "#ff4d6d";
-    const fx = DIRS[u.dir].x;
-    const fy = DIRS[u.dir].y;
+    const body = npc ? "#2a2818" : friend ? "#12343a" : elite ? "#2a1020" : "#3a1418";
+    const accent = npc ? "#ffc857" : friend ? "#3ef0d0" : elite ? "#ffc857" : "#ff4d6d";
+    const face = yawDir(DIRS[u.dir].x, DIRS[u.dir].y, this.yaw);
+    const fx = face.x;
+    const fy = face.y;
     const dx = (fx - fy) * 5 * z * (u.lunge || 0);
     const dy = (fx + fy) * 2.5 * z * (u.lunge || 0);
     const x = p.x + dx;
@@ -461,7 +530,7 @@ export class Renderer {
     ctx.lineWidth = 1.4;
     ctx.stroke();
 
-    ctx.fillStyle = friend ? "#d7ece8" : elite ? "#f3e0b0" : "#e8c8c8";
+    ctx.fillStyle = npc ? "#f0e6c8" : friend ? "#d7ece8" : elite ? "#f3e0b0" : "#e8c8c8";
     ctx.beginPath();
     ctx.arc(x, y - 14 * scale, 6.2 * scale, 0, Math.PI * 2);
     ctx.fill();
@@ -482,6 +551,9 @@ export class Renderer {
     } else if (elite) {
       ctx.fillStyle = "#ffc857";
       ctx.fillRect(x - 8 * scale, y - 18 * scale, 16 * scale, 3 * scale);
+    } else if (npc) {
+      ctx.fillStyle = "#d8c48a";
+      ctx.fillRect(x - 7 * scale, y - 4 * scale, 14 * scale, 5 * scale);
     }
 
     const ix = (fx - fy) * 10 * scale;
@@ -498,7 +570,7 @@ export class Renderer {
     const ratio = Math.max(0, u.hp / u.maxHp);
     ctx.fillStyle = "#111018";
     ctx.fillRect(x - bw / 2, y - 28 * scale, bw, 3.5 * scale);
-    ctx.fillStyle = friend ? "#3ef0d0" : "#ff4d6d";
+    ctx.fillStyle = npc ? "#ffc857" : friend ? "#3ef0d0" : "#ff4d6d";
     ctx.fillRect(x - bw / 2, y - 28 * scale, bw * ratio, 3.5 * scale);
 
     ctx.fillStyle = "#e8eef2";
@@ -506,7 +578,7 @@ export class Renderer {
     ctx.textAlign = "center";
     ctx.fillText(u.name.split(" ")[0], x, y + 22 * scale);
 
-    if (u.acted && u.team === "player") {
+    if (u.acted && u.team === "player" && !u.npc) {
       ctx.fillStyle = "rgba(0,0,0,0.35)";
       ctx.beginPath();
       ctx.arc(x, y - 4 * z, 16 * scale, 0, Math.PI * 2);
