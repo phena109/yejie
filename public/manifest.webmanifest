@@ -1,0 +1,20 @@
+{
+  "name": "夜界",
+  "short_name": "夜界",
+  "description": "都市格子戰棋。西門夜市屋頂，第一手。",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#07070c",
+  "theme_color": "#07070c",
+  "lang": "zh-Hant-TW",
+  "icons": [
+    {
+      "src": "icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ]
+}
