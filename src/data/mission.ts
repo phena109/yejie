@@ -15,9 +15,9 @@ function unit(partial: Omit<Unit, "acted" | "skillUsed" | "skipNext" | "dead" | 
 export function makePlayerUnits(): Unit[] {
   return [
     unit({
-      id: "lin",
-      name: "林澈",
-      title: "突擊",
+      id: "mara",
+      name: "Mara Ellison",
+      title: "警員",
       team: "player",
       role: "striker",
       x: 3,
@@ -29,13 +29,13 @@ export function makePlayerUnits(): Unit[] {
       mov: 5,
       jmp: 2,
       dir: 0,
-      skillName: "裂影",
-      skillHint: "近身重擊。可跨越更大高差，傷害提高。",
+      skillName: "重擊",
+      skillHint: "近身重擊，傷害較高，也可以打更高的高度差。",
     }),
     unit({
-      id: "gu",
-      name: "顧晏",
-      title: "控場",
+      id: "dana",
+      name: "Dana Ruiz",
+      title: "搭檔",
       team: "player",
       role: "controller",
       x: 4,
@@ -47,13 +47,13 @@ export function makePlayerUnits(): Unit[] {
       mov: 4,
       jmp: 1,
       dir: 0,
-      skillName: "封線",
-      skillHint: "指定一名敵軍，使其下回合無法行動。",
+      skillName: "攔住",
+      skillHint: "讓目標下一回合無法行動，並造成少量傷害。",
     }),
     unit({
-      id: "shen",
-      name: "沈芮",
-      title: "支援",
+      id: "priya",
+      name: "Priya Shah",
+      title: "急救員",
       team: "player",
       role: "support",
       x: 5,
@@ -65,14 +65,14 @@ export function makePlayerUnits(): Unit[] {
       mov: 4,
       jmp: 1,
       dir: 0,
-      skillName: "穩脈",
-      skillHint: "治療鄰近友軍（含自己）。",
+      skillName: "包紮",
+      skillHint: "治療相鄰的友軍，也可以用在自己身上。",
     }),
   ];
 }
 
 export function makeEnemyUnits(): Unit[] {
-  const grunt = (
+  const field = (
     id: string,
     name: string,
     x: number,
@@ -82,7 +82,7 @@ export function makeEnemyUnits(): Unit[] {
     unit({
       id,
       name,
-      title: "執行員",
+      title: "現場人員",
       team: "enemy",
       role: "grunt",
       x,
@@ -100,9 +100,9 @@ export function makeEnemyUnits(): Unit[] {
 
   return [
     unit({
-      id: "he",
-      name: "賀凜",
-      title: "司夜",
+      id: "crosby",
+      name: "Crosby",
+      title: "現場主管",
       team: "enemy",
       role: "elite",
       x: 5,
@@ -117,12 +117,12 @@ export function makeEnemyUnits(): Unit[] {
       skillName: "",
       skillHint: "",
     }),
-    grunt("e1", "執行員・周", 2, 1, 2),
-    grunt("e2", "執行員・范", 7, 1, 2),
-    grunt("e3", "執行員・吳", 3, 2, 2),
-    grunt("e4", "執行員・梁", 6, 2, 2),
-    grunt("e5", "執行員・曹", 4, 3, 2),
+    field("e1", "Hale", 2, 1, 2),
+    field("e2", "Cole", 7, 1, 2),
+    field("e3", "Nash", 3, 2, 2),
+    field("e4", "Pike", 6, 2, 2),
+    field("e5", "Voss", 4, 3, 2),
   ];
 }
 
-export const ELITE_ID = "he";
+export const ELITE_ID = "crosby";

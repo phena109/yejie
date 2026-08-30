@@ -1,7 +1,7 @@
 {
   "name": "夜界",
   "short_name": "夜界",
-  "description": "都市格子戰棋。西門夜市屋頂，第一手。",
+  "description": "都市格子戰棋。國王碼頭夜市。夜班出勤。",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",

@@ -54,7 +54,7 @@ body {
 
 #hud-title {
   font-size: 18px;
-  letter-spacing: 0.28em;
+  letter-spacing: 0.12em;
   font-weight: 700;
 }
 
@@ -274,13 +274,13 @@ body {
   margin: 0;
   color: var(--neon);
   font-size: 11px;
-  letter-spacing: 0.22em;
+  letter-spacing: 0.08em;
 }
 
 #briefing h1 {
   margin: 8px 0 0;
-  font-size: 34px;
-  letter-spacing: 0.34em;
+  font-size: 28px;
+  letter-spacing: 0.12em;
 }
 
 #briefing h2,

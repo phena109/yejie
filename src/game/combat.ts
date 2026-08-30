@@ -41,7 +41,7 @@ export function makeAttackForecast(
   const bits: string[] = [FACE_LABEL[face]];
   if (dh > 0) bits.push("高地 +3");
   if (dh < 0) bits.push("仰攻 −2");
-  if (skill && actor.role === "striker") bits.push("裂影 +40%");
+  if (skill && actor.role === "striker") bits.push("重擊 +40%");
   return {
     kind: skill ? "skill" : "attack",
     actor,
@@ -66,7 +66,7 @@ export function makeSkillForecast(
       kind: "skill",
       actor,
       target,
-      label: `封線　${actor.name} → ${target.name}`,
+      label: `${actor.skillName}　${actor.name} → ${target.name}`,
       detail: "下回合無法行動　並造成 4 傷害",
       dmg: 4,
       heal: 0,
@@ -79,7 +79,7 @@ export function makeSkillForecast(
     kind: "skill",
     actor,
     target,
-    label: `穩脈　${actor.name} → ${target.name}`,
+    label: `${actor.skillName}　${actor.name} → ${target.name}`,
     detail: `回復 ${heal} 生命`,
     dmg: 0,
     heal,

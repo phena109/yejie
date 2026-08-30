@@ -123,8 +123,8 @@ export class Game {
     this.phase = "select";
     this.renderer.centerOn(this.units, this.map);
     if (location.hash === "#play") {
-      const lin = this.units.find((u) => u.id === "lin");
-      if (lin) this.selectUnit(lin);
+      const mara = this.units.find((u) => u.id === "mara");
+      if (mara) this.selectUnit(mara);
     }
     this.syncUi();
   }
@@ -362,7 +362,7 @@ export class Game {
       this.log = `${actor.name} 對 ${target.name} 造成 ${f.dmg} 傷害`;
       if (f.skip) {
         target.skipNext = true;
-        this.log += "　封線生效";
+        this.log += "　攔住生效";
       }
       if (target.hp <= 0) {
         target.dead = true;
@@ -407,7 +407,7 @@ export class Game {
       if (this.phase === "victory" || this.phase === "defeat") break;
       if (e.skipNext) {
         e.skipNext = false;
-        this.log = `${e.name} 被封線，無法行動。`;
+        this.log = `${e.name} 被攔住，無法行動。`;
         this.syncUi();
         await delay(420);
         continue;
@@ -441,7 +441,12 @@ export class Game {
         await delay(120);
       }
     }
-    for (const u of this.units) if (u.team === "player") u.acted = false;
+    for (const u of this.units) {
+      if (u.team === "player") {
+        u.acted = false;
+        u.skillUsed = false;
+      }
+    }
     this.turn += 1;
     this.phase = "select";
     this.busy = false;
@@ -468,9 +473,9 @@ export class Game {
     this.clearSel();
     this.result.hidden = false;
     this.result.classList.remove("lose");
-    this.resultKicker.textContent = "任務完成";
-    this.resultTitle.textContent = "屋頂還在。講者會再派人。";
-    this.resultBody.textContent = "司夜・賀凜倒下。突擊組開始撤出夜市。市民只聽到碗盤聲，沒聽到棋盤翻面。";
+    this.resultKicker.textContent = "勝利";
+    this.resultTitle.textContent = "現場結束了。";
+    this.resultBody.textContent = "Crosby 倒下。其餘的人散了。市場還開著。";
     this.syncUi();
   }
 
@@ -480,9 +485,9 @@ export class Game {
     this.clearSel();
     this.result.hidden = false;
     this.result.classList.add("lose");
-    this.resultKicker.textContent = "任務失敗";
-    this.resultTitle.textContent = "這塊街區進了織會的格子。";
-    this.resultBody.textContent = "全隊失去戰鬥能力。夜市的燈還亮著，棋已經下完。";
+    this.resultKicker.textContent = "失敗";
+    this.resultTitle.textContent = "三個人都倒下了。";
+    this.resultBody.textContent = "沒人能繼續。屋頂上的人還在。";
     this.syncUi();
   }
 
@@ -497,7 +502,7 @@ export class Game {
   private syncUi(): void {
     this.hudTurn.textContent = `回合 ${this.turn}`;
     this.hudPhase.textContent =
-      this.phase === "enemy" ? "敵軍" : this.phase === "victory" ? "勝利" : this.phase === "defeat" ? "敗北" : "我軍";
+      this.phase === "enemy" ? "敵軍" : this.phase === "victory" ? "勝利" : this.phase === "defeat" ? "失敗" : "我軍";
     this.logEl.textContent = this.log;
 
     const play = this.phase === "select" || this.phase === "moved" || this.phase === "skillAim" || this.phase === "forecast";

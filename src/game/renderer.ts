@@ -2,8 +2,13 @@ import type { GameMap } from "./map";
 import type { FloatText, Phase, Tile, Unit, Vec2 } from "./types";
 import { DIRS, key } from "./types";
 
-export const TILE = 48;
-export const ELEV = 14;
+/** Diamond width (2:1 orthogonal isometric). */
+export const TILE_W = 64;
+/** Diamond height. */
+export const TILE_H = 32;
+/** Vertical pixels per height step (stacked block). */
+export const BLOCK = 24;
+/** Ground slab under height-0 tiles. */
 export const BASE = 8;
 
 export interface Cam {
@@ -12,10 +17,62 @@ export interface Cam {
   zoom: number;
 }
 
+function iso(x: number, y: number, h = 0): Vec2 {
+  return {
+    x: (x - y) * (TILE_W / 2),
+    y: (x + y) * (TILE_H / 2) - h * BLOCK,
+  };
+}
+
+function pointInDiamond(px: number, py: number, cx: number, cy: number, hw: number, hh: number): boolean {
+  if (hw <= 0 || hh <= 0) return false;
+  return Math.abs(px - cx) / hw + Math.abs(py - cy) / hh <= 1.02;
+}
+
+function pointInTri(
+  px: number,
+  py: number,
+  ax: number,
+  ay: number,
+  bx: number,
+  by: number,
+  cx: number,
+  cy: number,
+): boolean {
+  const v0x = cx - ax;
+  const v0y = cy - ay;
+  const v1x = bx - ax;
+  const v1y = by - ay;
+  const v2x = px - ax;
+  const v2y = py - ay;
+  const dot00 = v0x * v0x + v0y * v0y;
+  const dot01 = v0x * v1x + v0y * v1y;
+  const dot02 = v0x * v2x + v0y * v2y;
+  const dot11 = v1x * v1x + v1y * v1y;
+  const dot12 = v1x * v2x + v1y * v2y;
+  const den = dot00 * dot11 - dot01 * dot01;
+  if (Math.abs(den) < 1e-8) return false;
+  const inv = 1 / den;
+  const u = (dot11 * dot02 - dot01 * dot12) * inv;
+  const v = (dot00 * dot12 - dot01 * dot02) * inv;
+  return u >= -0.02 && v >= -0.02 && u + v <= 1.02;
+}
+
+function pointInQuad(
+  px: number,
+  py: number,
+  a: Vec2,
+  b: Vec2,
+  c: Vec2,
+  d: Vec2,
+): boolean {
+  return pointInTri(px, py, a.x, a.y, b.x, b.y, c.x, c.y) || pointInTri(px, py, a.x, a.y, c.x, c.y, d.x, d.y);
+}
+
 export class Renderer {
   readonly canvas: HTMLCanvasElement;
   readonly ctx: CanvasRenderingContext2D;
-  cam: Cam = { x: 5 * TILE, y: 9 * TILE, zoom: 0.92 };
+  cam: Cam = { x: -224, y: 180, zoom: 0.7 };
   w = 390;
   h = 700;
   time = 0;
@@ -39,32 +96,53 @@ export class Renderer {
   }
 
   worldToScreen(x: number, y: number, h = 0): Vec2 {
-    const wx = x * TILE + TILE / 2;
-    const wy = y * TILE + TILE / 2 - h * ELEV;
+    const p = iso(x, y, h);
     return {
-      x: (wx - this.cam.x) * this.cam.zoom + this.w / 2,
-      y: (wy - this.cam.y) * this.cam.zoom + this.h / 2,
+      x: (p.x - this.cam.x) * this.cam.zoom + this.w / 2,
+      y: (p.y - this.cam.y) * this.cam.zoom + this.h / 2,
     };
   }
 
-  tileTop(x: number, y: number, h: number): { x: number; y: number; s: number } {
-    const s = TILE * this.cam.zoom;
+  private topMetrics(x: number, y: number, h: number): { cx: number; cy: number; hw: number; hh: number; drop: number } {
     const p = this.worldToScreen(x, y, h);
-    return { x: p.x - s / 2, y: p.y - s / 2, s };
+    return {
+      cx: p.x,
+      cy: p.y,
+      hw: (TILE_W / 2) * this.cam.zoom,
+      hh: (TILE_H / 2) * this.cam.zoom,
+      drop: (BASE + h * BLOCK) * this.cam.zoom,
+    };
   }
 
   hitTile(sx: number, sy: number, map: GameMap): Vec2 | null {
     let hit: Vec2 | null = null;
-    for (let y = 0; y < map.h; y++) {
+    for (let d = 0; d < map.w + map.h - 1; d++) {
       for (let x = 0; x < map.w; x++) {
+        const y = d - x;
+        if (y < 0 || y >= map.h) continue;
         const t = map.tiles[y][x];
-        const top = this.tileTop(x, y, t.h);
-        if (sx >= top.x && sy >= top.y && sx < top.x + top.s && sy < top.y + top.s) {
-          hit = { x, y };
-        }
+        if (this.hitPrism(sx, sy, t)) hit = { x, y };
       }
     }
     return hit;
+  }
+
+  private hitPrism(sx: number, sy: number, t: Tile): boolean {
+    const { cx, cy, hw, hh, drop } = this.topMetrics(t.x, t.y, t.h);
+    if (pointInDiamond(sx, sy, cx, cy, hw, hh)) return true;
+    const left = [
+      { x: cx - hw, y: cy },
+      { x: cx, y: cy + hh },
+      { x: cx, y: cy + hh + drop },
+      { x: cx - hw, y: cy + drop },
+    ];
+    const right = [
+      { x: cx + hw, y: cy },
+      { x: cx, y: cy + hh },
+      { x: cx, y: cy + hh + drop },
+      { x: cx + hw, y: cy + drop },
+    ];
+    return pointInQuad(sx, sy, left[0], left[1], left[2], left[3]) || pointInQuad(sx, sy, right[0], right[1], right[2], right[3]);
   }
 
   centerOn(units: Unit[], map: GameMap): void {
@@ -73,12 +151,13 @@ export class Renderer {
     let x = 0;
     let y = 0;
     for (const u of living) {
-      x += u.x * TILE + TILE / 2;
-      y += u.y * TILE + TILE / 2 - map.heightAt(u.x, u.y) * ELEV;
+      const p = iso(u.x, u.y, map.heightAt(u.x, u.y));
+      x += p.x;
+      y += p.y;
     }
     this.cam.x = x / living.length;
-    this.cam.y = y / living.length - 20;
-    this.cam.zoom = 0.92;
+    this.cam.y = y / living.length - 52;
+    this.cam.zoom = 0.7;
   }
 
   draw(
@@ -99,14 +178,21 @@ export class Renderer {
     ctx.clearRect(0, 0, this.w, this.h);
     this.drawBackdrop();
 
-    for (let y = 0; y < map.h; y++) {
-      for (let x = 0; x < map.w; x++) {
-        this.drawTile(map.tiles[y][x], overlays);
-      }
+    const byTile = new Map<string, Unit>();
+    for (const u of units) {
+      if (u.dead) continue;
+      byTile.set(key(u.x, u.y), u);
     }
 
-    const living = units.filter((u) => !u.dead).sort((a, b) => a.y - b.y || a.x - b.x);
-    for (const u of living) this.drawUnit(u, map, overlays);
+    for (let d = 0; d < map.w + map.h - 1; d++) {
+      for (let x = 0; x < map.w; x++) {
+        const y = d - x;
+        if (y < 0 || y >= map.h) continue;
+        this.drawTile(map.tiles[y][x], overlays);
+        const u = byTile.get(key(x, y));
+        if (u) this.drawUnit(u, map, overlays);
+      }
+    }
 
     this.drawVignette();
     this.drawFloats(floats, map);
@@ -133,103 +219,193 @@ export class Renderer {
 
   private drawTile(t: Tile, overlays: { move: Set<string>; action: Set<string>; skill: Set<string> }): void {
     const ctx = this.ctx;
-    const top = this.tileTop(t.x, t.y, t.h);
-    const drop = (BASE + t.h * ELEV) * this.cam.zoom;
+    const { cx, cy, hw, hh, drop } = this.topMetrics(t.x, t.y, t.h);
     const k = key(t.x, t.y);
     const checker = (t.x + t.y) % 2 === 0;
+    const z = this.cam.zoom;
 
     let topCol = "#1a1a24";
-    let sideCol = "#101018";
+    let leftCol = "#101018";
+    let rightCol = "#16161f";
     if (t.terrain === "street") {
-      topCol = checker ? "#1c2230" : "#161b26";
-      sideCol = "#0c1018";
+      topCol = checker ? "#2a3448" : "#232c3e";
+      leftCol = "#121820";
+      rightCol = "#1a2230";
     } else if (t.terrain === "stairs") {
-      topCol = checker ? "#3a342c" : "#2e2923";
-      sideCol = "#1c1814";
+      topCol = checker ? "#4a4338" : "#3e392f";
+      leftCol = "#241e16";
+      rightCol = "#322b22";
     } else {
-      topCol = checker ? "#26222e" : "#1e1b26";
-      sideCol = "#121018";
+      topCol = checker ? "#3a3448" : "#312c3e";
+      leftCol = "#1a1624";
+      rightCol = "#262030";
     }
 
-    ctx.fillStyle = sideCol;
-    ctx.fillRect(top.x, top.y + top.s - 1, top.s, drop + 1);
+    ctx.beginPath();
+    ctx.moveTo(cx - hw, cy);
+    ctx.lineTo(cx, cy + hh);
+    ctx.lineTo(cx, cy + hh + drop);
+    ctx.lineTo(cx - hw, cy + drop);
+    ctx.closePath();
+    ctx.fillStyle = leftCol;
+    ctx.fill();
 
-    ctx.fillStyle = topCol;
-    ctx.fillRect(top.x, top.y, top.s, top.s);
+    ctx.beginPath();
+    ctx.moveTo(cx + hw, cy);
+    ctx.lineTo(cx, cy + hh);
+    ctx.lineTo(cx, cy + hh + drop);
+    ctx.lineTo(cx + hw, cy + drop);
+    ctx.closePath();
+    ctx.fillStyle = rightCol;
+    ctx.fill();
 
-    ctx.strokeStyle = "rgba(80, 220, 255, 0.16)";
+    const seam = BLOCK * z;
+    ctx.strokeStyle = "rgba(0,0,0,0.35)";
     ctx.lineWidth = 1;
-    ctx.strokeRect(top.x + 0.5, top.y + 0.5, top.s - 1, top.s - 1);
+    for (let i = 1; i <= t.h; i++) {
+      const dy = i * seam;
+      ctx.beginPath();
+      ctx.moveTo(cx - hw, cy + dy);
+      ctx.lineTo(cx, cy + hh + dy);
+      ctx.lineTo(cx + hw, cy + dy);
+      ctx.stroke();
+    }
+
+    this.diamondPath(cx, cy, hw, hh);
+    ctx.fillStyle = topCol;
+    ctx.fill();
+    ctx.strokeStyle = "rgba(120, 230, 255, 0.38)";
+    ctx.lineWidth = 1.15;
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(cx, cy - hh);
+    ctx.lineTo(cx + hw, cy);
+    ctx.strokeStyle = "rgba(220, 245, 255, 0.28)";
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(cx, cy - hh);
+    ctx.lineTo(cx - hw, cy);
+    ctx.strokeStyle = "rgba(40, 60, 80, 0.45)";
+    ctx.stroke();
 
     if (t.terrain === "street") {
-      ctx.fillStyle = "rgba(80, 160, 255, 0.06)";
+      ctx.fillStyle = "rgba(80, 160, 255, 0.08)";
       ctx.beginPath();
-      ctx.ellipse(top.x + top.s * 0.4, top.y + top.s * 0.62, top.s * 0.22, top.s * 0.08, -0.4, 0, Math.PI * 2);
+      ctx.ellipse(cx - hw * 0.12, cy + hh * 0.18, hw * 0.28, hh * 0.22, 0, 0, Math.PI * 2);
       ctx.fill();
     }
     if (t.terrain === "stairs") {
-      ctx.strokeStyle = "rgba(255, 220, 170, 0.2)";
+      ctx.strokeStyle = "rgba(255, 220, 170, 0.28)";
+      ctx.lineWidth = 1;
       for (let i = 1; i <= 3; i++) {
-        const yy = top.y + (top.s * i) / 4;
+        const t0 = i / 4;
+        const y0 = cy - hh + (hh * 2) * t0;
+        const half = hw * (1 - Math.abs(1 - 2 * t0));
         ctx.beginPath();
-        ctx.moveTo(top.x + 4, yy);
-        ctx.lineTo(top.x + top.s - 4, yy);
+        ctx.moveTo(cx - half, y0);
+        ctx.lineTo(cx + half, y0);
         ctx.stroke();
       }
     }
 
-    this.drawProp(t, top);
+    this.drawProp(t, cx, cy, hw, hh, z);
 
     if (overlays.move.has(k)) {
-      ctx.fillStyle = "rgba(62, 240, 208, 0.32)";
-      ctx.fillRect(top.x + 2, top.y + 2, top.s - 4, top.s - 4);
-      ctx.strokeStyle = "rgba(62, 240, 208, 0.85)";
-      ctx.strokeRect(top.x + 2, top.y + 2, top.s - 4, top.s - 4);
+      this.diamondPath(cx, cy, hw * 0.92, hh * 0.92);
+      ctx.fillStyle = "rgba(62, 240, 208, 0.34)";
+      ctx.fill();
+      ctx.strokeStyle = "rgba(62, 240, 208, 0.9)";
+      ctx.stroke();
     }
     if (overlays.action.has(k)) {
-      ctx.fillStyle = "rgba(255, 77, 109, 0.34)";
-      ctx.fillRect(top.x + 3, top.y + 3, top.s - 6, top.s - 6);
-      ctx.strokeStyle = "rgba(255, 77, 109, 0.9)";
-      ctx.strokeRect(top.x + 3, top.y + 3, top.s - 6, top.s - 6);
+      this.diamondPath(cx, cy, hw * 0.88, hh * 0.88);
+      ctx.fillStyle = "rgba(255, 77, 109, 0.36)";
+      ctx.fill();
+      ctx.strokeStyle = "rgba(255, 77, 109, 0.92)";
+      ctx.stroke();
     }
     if (overlays.skill.has(k)) {
-      ctx.fillStyle = "rgba(180, 140, 255, 0.34)";
-      ctx.fillRect(top.x + 3, top.y + 3, top.s - 6, top.s - 6);
+      this.diamondPath(cx, cy, hw * 0.88, hh * 0.88);
+      ctx.fillStyle = "rgba(180, 140, 255, 0.36)";
+      ctx.fill();
       ctx.strokeStyle = "rgba(200, 170, 255, 0.95)";
-      ctx.strokeRect(top.x + 3, top.y + 3, top.s - 6, top.s - 6);
+      ctx.stroke();
     }
   }
 
-  private drawProp(t: Tile, top: { x: number; y: number; s: number }): void {
+  private diamondPath(cx: number, cy: number, hw: number, hh: number): void {
     const ctx = this.ctx;
-    const s = top.s;
+    ctx.beginPath();
+    ctx.moveTo(cx, cy - hh);
+    ctx.lineTo(cx + hw, cy);
+    ctx.lineTo(cx, cy + hh);
+    ctx.lineTo(cx - hw, cy);
+    ctx.closePath();
+  }
+
+  private drawProp(t: Tile, cx: number, cy: number, hw: number, hh: number, z: number): void {
+    const ctx = this.ctx;
     if (t.prop === "stall") {
+      const ph = 14 * z;
+      ctx.beginPath();
+      ctx.moveTo(cx - hw * 0.55, cy + hh * 0.05);
+      ctx.lineTo(cx, cy + hh * 0.55);
+      ctx.lineTo(cx, cy + hh * 0.55 + ph);
+      ctx.lineTo(cx - hw * 0.55, cy + hh * 0.05 + ph);
+      ctx.closePath();
+      ctx.fillStyle = "#3a141c";
+      ctx.fill();
+      ctx.beginPath();
+      ctx.moveTo(cx + hw * 0.55, cy + hh * 0.05);
+      ctx.lineTo(cx, cy + hh * 0.55);
+      ctx.lineTo(cx, cy + hh * 0.55 + ph);
+      ctx.lineTo(cx + hw * 0.55, cy + hh * 0.05 + ph);
+      ctx.closePath();
       ctx.fillStyle = "#4a1d28";
-      ctx.fillRect(top.x + s * 0.12, top.y + s * 0.38, s * 0.76, s * 0.5);
+      ctx.fill();
       const flicker = 0.75 + Math.sin(this.time / 180 + t.x) * 0.2;
-      ctx.fillStyle = `rgba(255, 61, 138, ${0.7 * flicker})`;
-      ctx.fillRect(top.x + s * 0.1, top.y + s * 0.18, s * 0.8, s * 0.22);
+      this.diamondPath(cx, cy - 4 * z, hw * 0.62, hh * 0.62);
+      ctx.fillStyle = `rgba(255, 61, 138, ${0.72 * flicker})`;
+      ctx.fill();
       ctx.fillStyle = "#ffe08a";
-      ctx.font = `${Math.max(9, s * 0.22)}px sans-serif`;
+      ctx.font = `bold ${Math.max(8, 9 * z)}px sans-serif`;
       ctx.textAlign = "center";
-      ctx.fillText(t.x < 5 ? "麵" : "茶", top.x + s / 2, top.y + s * 0.36);
+      ctx.fillText(t.x < 5 ? "FISH" : "TEA", cx, cy - 2 * z);
     } else if (t.prop === "ac") {
+      const ph = 10 * z;
+      ctx.beginPath();
+      ctx.moveTo(cx - hw * 0.42, cy);
+      ctx.lineTo(cx, cy + hh * 0.42);
+      ctx.lineTo(cx, cy + hh * 0.42 + ph);
+      ctx.lineTo(cx - hw * 0.42, cy + ph);
+      ctx.closePath();
+      ctx.fillStyle = "#2e323c";
+      ctx.fill();
+      ctx.beginPath();
+      ctx.moveTo(cx + hw * 0.42, cy);
+      ctx.lineTo(cx, cy + hh * 0.42);
+      ctx.lineTo(cx, cy + hh * 0.42 + ph);
+      ctx.lineTo(cx + hw * 0.42, cy + ph);
+      ctx.closePath();
       ctx.fillStyle = "#3a3e48";
-      ctx.fillRect(top.x + s * 0.18, top.y + s * 0.28, s * 0.64, s * 0.46);
+      ctx.fill();
+      this.diamondPath(cx, cy - 2 * z, hw * 0.42, hh * 0.42);
+      ctx.fillStyle = "#4a5060";
+      ctx.fill();
       ctx.strokeStyle = "#8a93a3";
       ctx.beginPath();
-      ctx.arc(top.x + s * 0.5, top.y + s * 0.5, s * 0.14, 0, Math.PI * 2);
+      ctx.arc(cx, cy - 2 * z, 4.5 * z, 0, Math.PI * 2);
       ctx.stroke();
     } else if (t.prop === "lamp") {
       ctx.fillStyle = "#2a2a32";
-      ctx.fillRect(top.x + s * 0.46, top.y + s * 0.1, s * 0.08, s * 0.7);
-      ctx.fillStyle = "rgba(255, 210, 120, 0.85)";
+      ctx.fillRect(cx - 1.6 * z, cy - 18 * z, 3.2 * z, 22 * z);
+      ctx.fillStyle = "rgba(255, 210, 120, 0.9)";
       ctx.beginPath();
-      ctx.arc(top.x + s * 0.5, top.y + s * 0.14, s * 0.1, 0, Math.PI * 2);
+      ctx.arc(cx, cy - 20 * z, 4.2 * z, 0, Math.PI * 2);
       ctx.fill();
       ctx.fillStyle = "rgba(255, 200, 110, 0.12)";
       ctx.beginPath();
-      ctx.arc(top.x + s * 0.5, top.y + s * 0.55, s * 0.38, 0, Math.PI * 2);
+      ctx.arc(cx, cy - 4 * z, 16 * z, 0, Math.PI * 2);
       ctx.fill();
     }
   }
@@ -248,21 +424,22 @@ export class Renderer {
     const friend = u.team === "player";
     const body = friend ? "#12343a" : elite ? "#2a1020" : "#3a1418";
     const accent = friend ? "#3ef0d0" : elite ? "#ffc857" : "#ff4d6d";
-    const dx = DIRS[u.dir].x * 6 * z * (u.lunge || 0);
-    const dy = DIRS[u.dir].y * 6 * z * (u.lunge || 0);
+    const fx = DIRS[u.dir].x;
+    const fy = DIRS[u.dir].y;
+    const dx = (fx - fy) * 5 * z * (u.lunge || 0);
+    const dy = (fx + fy) * 2.5 * z * (u.lunge || 0);
     const x = p.x + dx;
-    const y = p.y + dy;
+    const y = p.y + dy - 6 * z;
 
-    ctx.fillStyle = "rgba(0,0,0,0.35)";
+    ctx.fillStyle = "rgba(0,0,0,0.38)";
     ctx.beginPath();
-    ctx.ellipse(p.x, p.y + 10 * z, 12 * scale, 5 * scale, 0, 0, Math.PI * 2);
+    ctx.ellipse(p.x, p.y + 4 * z, 11 * scale, 5.5 * scale, 0, 0, Math.PI * 2);
     ctx.fill();
 
     if (overlays.selected?.id === u.id) {
       ctx.strokeStyle = accent;
       ctx.lineWidth = 2;
-      ctx.beginPath();
-      ctx.arc(x, y - 4 * z, 18 * scale, 0, Math.PI * 2);
+      this.diamondPath(p.x, p.y, 16 * scale, 8 * scale);
       ctx.stroke();
     }
     if (overlays.target?.id === u.id) {
@@ -307,13 +484,13 @@ export class Renderer {
       ctx.fillRect(x - 8 * scale, y - 18 * scale, 16 * scale, 3 * scale);
     }
 
-    const fx = DIRS[u.dir].x;
-    const fy = DIRS[u.dir].y;
+    const ix = (fx - fy) * 10 * scale;
+    const iy = (fx + fy) * 5 * scale;
     ctx.fillStyle = accent;
     ctx.beginPath();
-    ctx.moveTo(x + fx * 14 * scale, y + fy * 12 * scale - 4 * scale);
-    ctx.lineTo(x + fx * 8 * scale - fy * 4 * scale, y + fy * 6 * scale);
-    ctx.lineTo(x + fx * 8 * scale + fy * 4 * scale, y + fy * 6 * scale);
+    ctx.moveTo(x + ix * 1.15, y + iy * 1.15 - 2 * scale);
+    ctx.lineTo(x + ix * 0.55 - iy * 0.35, y + iy * 0.55 + ix * 0.18);
+    ctx.lineTo(x + ix * 0.55 + iy * 0.35, y + iy * 0.55 - ix * 0.18);
     ctx.closePath();
     ctx.fill();
 
@@ -327,7 +504,7 @@ export class Renderer {
     ctx.fillStyle = "#e8eef2";
     ctx.font = `${Math.max(9, 10 * z)}px sans-serif`;
     ctx.textAlign = "center";
-    ctx.fillText(u.name, x, y + 22 * scale);
+    ctx.fillText(u.name.split(" ")[0], x, y + 22 * scale);
 
     if (u.acted && u.team === "player") {
       ctx.fillStyle = "rgba(0,0,0,0.35)";

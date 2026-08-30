@@ -16,26 +16,30 @@ This build is a PWA (manifest plus service worker). No account, no backend, no a
 
 ## Design lock
 
-Setting: modern real-world city. Magic is a faint grid over real streets. The Weave kept the supernatural hidden. New leadership (the Speaker) wants to stop hiding and start ruling by claiming city districts from the inside.
+Setting: an ordinary English-speaking city. Night buses, a late-closing market, police radios. Magic has been kept off the books for a long time by a private group that calls itself the Assembly. They have a new Chair. The old rule was hide. The new rule is take this city first, then the rest.
 
-Player: Lin Che (林澈), a Weave field agent sidelined under the old stay-hidden rules, pulled back by the Speakers purge.
+Player: Constable Mara Ellison, night shift. Not a specialist unit, not anyone important. She notices things a second early.
 
-Mission 01, First Move (第一手): stop a Weave strike team seizing a Ximending night market rooftop and street block before civilians notice.
+Mission 01: a call about a disturbance on a King's Wharf market roof (國王碼頭夜市). Partner Dana Ruiz goes. Market first-aider Priya Shah will not leave. On the roof, people with no uniforms are marking the street like a game board.
 
-Win: defeat the elite Night Steward He Lin (司夜・賀凜). Remaining grunts can flee.
+Win: defeat Crosby (the person in charge on site). Remaining field people can leave.
 
 Lose: all three player units down.
 
+View: orthogonal ~45° isometric. Diamond tiles. Height as stacked blocks (street / stairs / roof). Canvas 2.5D only.
+
+Skills: usable once per that unit's turn, not once per battle. `skillUsed` resets when the unit can act again.
+
 Tactics are not dumbed down for mobile. Elevation, jump, climb cost, melee height limit, side and back damage, confirm/cancel, and undo-move-before-action stay. The only mobile compromise is the control scheme: tap, drag, pinch, large dock buttons, no hover, no right-click.
 
-Language: all player-facing text is Traditional Chinese (Taiwan). English lives in code and comments only.
+Language: people in the world speak English. Traditional Chinese is convenience UI only — a plain translation. Unit names are English. UI verbs are ordinary 繁中 (移動, 攻擊, 確認, 取消, 待機, 結束回合, 傷害, 勝利, 失敗). Skill names: 重擊, 攔住, 包紮.
 
 ## Roster
 
-- 林澈, 突擊. Move 5, Jump 2. Can vault from street onto roof. Skill 裂影: heavy melee with extra height.
-- 顧晏, 控場. Move 4, Jump 1. Needs stairs. Skill 封線: target skips their next turn, plus chip damage.
-- 沈芮, 支援. Move 4, Jump 1. Skill 穩脈: heal an adjacent ally or self.
-- Enemies: 執行員・周, 范, 吳, 梁, 曹 (five loyalists) plus elite 司夜・賀凜 on the north roof.
+- Mara Ellison, constable, striker. Move 5, Jump 2. Can vault from street onto roof. Skill 重擊: heavy melee with extra height.
+- Dana Ruiz, partner, controller. Move 4, Jump 1. Needs stairs. Skill 攔住: target skips their next turn, plus chip damage.
+- Priya Shah, market first-aider, support. Move 4, Jump 1. Skill 包紮: heal an adjacent ally or self.
+- Enemies: Assembly field people (Hale, Cole, Nash, Pike, Voss) plus Crosby on the north roof.
 
 ## What is in the slice
 
@@ -44,7 +48,7 @@ Language: all player-facing text is Traditional Chinese (Taiwan). English lives 
 - Select unit, show move range, move, show action range, attack or skill or wait, next unit, end turn, enemy AI.
 - Cancel undoes the move before an action is confirmed. Tap an in-range enemy to preview damage, Confirm to strike.
 - Camera starts on the player team. Drag to pan. Pinch to zoom.
-- Original canvas art: wet asphalt, neon stalls, rooftop units. No copyrighted assets.
+- Original canvas art: wet asphalt, market stalls, rooftop units, isometric diamonds. No copyrighted assets.
 
 ## What was cut on purpose
 
