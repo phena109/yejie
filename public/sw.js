@@ -1,4 +1,4 @@
-const CACHE = "yejie-v3";
+const CACHE = "yejie-v4";
 
 self.addEventListener("install", (event) => {
   event.waitUntil(

@@ -15,8 +15,8 @@
     <link rel="icon" href="./icon.svg" type="image/svg+xml" />
     <link rel="apple-touch-icon" href="./icon.svg" />
     <title>夜界</title>
-    <script type="module" crossorigin src="./assets/index-C9AvL2gw.js"></script>
-    <link rel="stylesheet" crossorigin href="./assets/index-BjbxRwbx.css">
+    <script type="module" crossorigin src="./assets/index-DZ2gBPg7.js"></script>
+    <link rel="stylesheet" crossorigin href="./assets/index-Bfr7UV98.css">
   </head>
   <body>
     <div id="app">
@@ -46,8 +46,12 @@
       <div id="forecast" hidden></div>
       <div id="log"></div>
 
+      <p id="cam-hint" hidden>雙指旋轉 · 捏合縮放</p>
       <button id="btn-rotate" type="button" hidden>旋轉</button>
+      <button id="btn-bag" type="button" hidden>背包</button>
+      <button id="btn-save" type="button" hidden>存檔</button>
       <button id="btn-end" type="button" hidden>結束回合</button>
+      <input id="yaw-slider" type="range" min="0" max="628" value="0" hidden />
 
       <nav id="dock">
         <button id="btn-cancel" type="button" disabled>取消</button>
@@ -57,7 +61,36 @@
       </nav>
     </div>
 
-    <section id="briefing">
+    <section id="title">
+      <div id="title-card">
+        <p class="eyebrow">國王碼頭</p>
+        <h1>夜界</h1>
+        <p class="loc">夜班出勤</p>
+        <div class="rule"></div>
+        <div class="setting">
+          <div class="setting-label">敵軍智力</div>
+          <div class="seg" id="seg-intel" data-key="intel">
+            <button type="button" data-v="L">L 低</button>
+            <button type="button" data-v="M" class="on">M 中</button>
+            <button type="button" data-v="H">H 高</button>
+          </div>
+        </div>
+        <div class="setting">
+          <div class="setting-label">敵軍戰力</div>
+          <div class="seg" id="seg-power" data-key="power">
+            <button type="button" data-v="L">L 低</button>
+            <button type="button" data-v="M" class="on">M 中</button>
+            <button type="button" data-v="H">H 高</button>
+          </div>
+        </div>
+        <button id="btn-new" type="button">新遊戲</button>
+        <button id="btn-continue" type="button" class="ghost" disabled>繼續</button>
+        <button id="btn-load" type="button" class="ghost">讀檔</button>
+        <button id="btn-bag-title" type="button" class="ghost">背包</button>
+      </div>
+    </section>
+
+    <section id="briefing" hidden>
       <div id="briefing-card">
         <p class="eyebrow">現場簡報</p>
         <h1>夜界</h1>
@@ -92,6 +125,23 @@
         <p id="result-body"></p>
         <button id="btn-next" type="button" hidden>下一場</button>
         <button id="btn-restart" type="button">再戰</button>
+      </div>
+    </section>
+
+    <section id="modal" hidden>
+      <div id="modal-card">
+        <p class="eyebrow" id="modal-kicker"></p>
+        <h2 id="modal-title"></h2>
+        <div id="modal-body"></div>
+        <button id="modal-close" type="button" class="ghost">關閉</button>
+      </div>
+    </section>
+
+    <section id="confirm" hidden>
+      <div id="confirm-card">
+        <p id="confirm-text">覆蓋此檔？</p>
+        <button id="confirm-yes" type="button">確定</button>
+        <button id="confirm-no" type="button" class="ghost">取消</button>
       </div>
     </section>
 

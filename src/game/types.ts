@@ -3,12 +3,14 @@ export type Role = "striker" | "controller" | "support" | "grunt" | "elite" | "c
 export type Terrain = "street" | "stairs" | "roof";
 export type Dir = 0 | 1 | 2 | 3;
 export type Prop = "stall" | "ac" | "lamp" | "crate";
-export type Yaw = 0 | 1 | 2 | 3;
+export type Diff = "L" | "M" | "H";
 
 export type Phase =
+  | "title"
   | "briefing"
   | "select"
   | "skillAim"
+  | "itemAim"
   | "forecast"
   | "enemy"
   | "victory"
@@ -44,6 +46,7 @@ export interface Unit {
   movedThisTurn: boolean;
   actedThisTurn: boolean;
   npc: boolean;
+  atkBuff: number;
 }
 
 export interface Tile {
@@ -87,6 +90,14 @@ export const DIRS: Vec2[] = [
   { x: -1, y: 0 },
 ];
 
+export const POWER_MULT: Record<Diff, number> = { L: 0.75, M: 1, H: 1.35 };
+
+export const DIFF_LABEL: Record<Diff, string> = {
+  L: "L 低",
+  M: "M 中",
+  H: "H 高",
+};
+
 export function key(x: number, y: number): string {
   return `${x},${y}`;
 }
@@ -111,33 +122,32 @@ export function delay(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
 }
 
-/** Rotate grid coords 90° CW per yaw step so iso diamonds and hit-tests stay aligned. */
-export function yawPoint(x: number, y: number, yaw: Yaw, w: number, h: number): Vec2 {
-  switch (yaw) {
-    case 0:
-      return { x, y };
-    case 1:
-      return { x: y, y: w - 1 - x };
-    case 2:
-      return { x: w - 1 - x, y: h - 1 - y };
-    case 3:
-      return { x: h - 1 - y, y: x };
-  }
+/** Rotate grid coords around map centre. yaw is radians; 0 matches the old facing. */
+export function yawPoint(x: number, y: number, yaw: number, w: number, h: number): Vec2 {
+  const cx = (w - 1) / 2;
+  const cy = (h - 1) / 2;
+  const dx = x - cx;
+  const dy = y - cy;
+  const c = Math.cos(yaw);
+  const s = Math.sin(yaw);
+  return { x: dx * c + dy * s, y: -dx * s + dy * c };
 }
 
-export function yawDir(dx: number, dy: number, yaw: Yaw): Vec2 {
-  switch (yaw) {
-    case 0:
-      return { x: dx, y: dy };
-    case 1:
-      return { x: dy, y: -dx };
-    case 2:
-      return { x: -dx, y: -dy };
-    case 3:
-      return { x: -dy, y: dx };
-  }
+export function yawDir(dx: number, dy: number, yaw: number): Vec2 {
+  const c = Math.cos(yaw);
+  const s = Math.sin(yaw);
+  return { x: dx * c + dy * s, y: -dx * s + dy * c };
 }
 
-export function nextYaw(yaw: Yaw): Yaw {
-  return ((yaw + 1) % 4) as Yaw;
+export function nextYaw(yaw: number): number {
+  return yaw + Math.PI / 2;
+}
+
+export function scaleEnemy(u: Unit, power: Diff): void {
+  if (u.team !== "enemy") return;
+  const m = POWER_MULT[power];
+  u.maxHp = Math.max(1, Math.round(u.maxHp * m));
+  u.hp = u.maxHp;
+  u.atk = Math.max(1, Math.round(u.atk * m));
+  u.def = Math.max(0, Math.round(u.def * m));
 }

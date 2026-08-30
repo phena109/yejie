@@ -202,7 +202,9 @@ body {
 }
 
 #btn-end,
-#btn-rotate {
+#btn-rotate,
+#btn-bag,
+#btn-save {
   position: absolute;
   bottom: calc(var(--dock-h) + env(safe-area-inset-bottom) + 10px);
   z-index: 7;
@@ -221,12 +223,46 @@ body {
   right: 12px;
 }
 
+#btn-save {
+  right: 12px;
+  bottom: calc(var(--dock-h) + env(safe-area-inset-bottom) + 58px);
+}
+
 #btn-rotate {
   left: 12px;
 }
 
+#btn-bag {
+  left: 80px;
+}
+
+#cam-hint {
+  position: absolute;
+  left: 12px;
+  bottom: calc(var(--dock-h) + env(safe-area-inset-bottom) + 58px);
+  z-index: 6;
+  margin: 0;
+  font-size: 10px;
+  color: var(--muted);
+  letter-spacing: 0.04em;
+  pointer-events: none;
+}
+
+#yaw-slider {
+  position: absolute;
+  left: 12px;
+  right: 12px;
+  bottom: calc(var(--dock-h) + env(safe-area-inset-bottom) + 102px);
+  z-index: 7;
+  height: 24px;
+}
+
 #btn-end[hidden],
-#btn-rotate[hidden] {
+#btn-rotate[hidden],
+#btn-bag[hidden],
+#btn-save[hidden],
+#cam-hint[hidden],
+#yaw-slider[hidden] {
   display: none;
 }
 
@@ -272,7 +308,10 @@ body {
 }
 
 #briefing,
-#result {
+#result,
+#title,
+#modal,
+#confirm {
   position: fixed;
   inset: 0;
   z-index: 20;
@@ -283,13 +322,35 @@ body {
   padding: 16px 16px calc(16px + env(safe-area-inset-bottom));
 }
 
+#title {
+  z-index: 21;
+  align-items: center;
+}
+
+#modal {
+  z-index: 30;
+  align-items: center;
+}
+
+#confirm {
+  z-index: 40;
+  align-items: center;
+  background: rgba(4, 4, 8, 0.62);
+}
+
 #briefing[hidden],
-#result[hidden] {
+#result[hidden],
+#title[hidden],
+#modal[hidden],
+#confirm[hidden] {
   display: none;
 }
 
 #briefing-card,
-#result-card {
+#result-card,
+#title-card,
+#modal-card,
+#confirm-card {
   width: min(430px, 100%);
   max-height: 92dvh;
   overflow: auto;
@@ -301,21 +362,26 @@ body {
   touch-action: pan-y;
 }
 
-#briefing .eyebrow {
+#briefing .eyebrow,
+#title .eyebrow,
+#modal .eyebrow {
   margin: 0;
   color: var(--neon);
   font-size: 11px;
   letter-spacing: 0.08em;
 }
 
-#briefing h1 {
+#briefing h1,
+#title h1 {
   margin: 8px 0 0;
   font-size: 28px;
   letter-spacing: 0.12em;
 }
 
 #briefing h2,
-#result h2 {
+#result h2,
+#title h2,
+#modal h2 {
   margin: 4px 0 0;
   font-size: 16px;
   font-weight: 600;
@@ -372,7 +438,11 @@ body {
 
 #btn-start,
 #btn-restart,
-#btn-next {
+#btn-next,
+#btn-new,
+#confirm-yes,
+#modal-card > button,
+#title-card > button {
   width: 100%;
   min-height: 48px;
   margin-top: 8px;
@@ -383,6 +453,21 @@ body {
   font-size: 16px;
   font-weight: 800;
   letter-spacing: 0.12em;
+}
+
+button.ghost,
+#btn-continue,
+#btn-load,
+#btn-bag-title,
+#modal-close,
+#confirm-no {
+  background: #161622 !important;
+  color: var(--text) !important;
+  border: 1px solid #2a2a3a !important;
+}
+
+button:disabled {
+  opacity: 0.35;
 }
 
 #btn-next[hidden] {
@@ -405,4 +490,108 @@ body {
   color: var(--muted);
   font-size: 14px;
   line-height: 1.6;
+}
+
+.setting {
+  margin: 10px 0 12px;
+}
+
+.setting-label {
+  font-size: 12px;
+  color: var(--muted);
+  margin-bottom: 6px;
+}
+
+.seg {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 6px;
+}
+
+.seg button {
+  min-height: 40px;
+  border-radius: 10px;
+  border: 1px solid #2a2a3a;
+  background: #161622;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.seg button.on {
+  background: var(--neon);
+  color: #04110f;
+  border-color: var(--neon);
+}
+
+.slot,
+.item-row,
+.ally-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  width: 100%;
+  min-height: 52px;
+  margin: 8px 0 0;
+  padding: 8px 12px;
+  border-radius: 12px;
+  border: 1px solid #2a2a3a;
+  background: #161622;
+  color: var(--text);
+  text-align: left;
+  font-size: 14px;
+}
+
+.slot b,
+.item-row b,
+.ally-row b {
+  display: block;
+  font-size: 14px;
+}
+
+.slot span,
+.item-row span,
+.ally-row span {
+  display: block;
+  font-size: 11px;
+  color: var(--muted);
+  font-weight: 400;
+  margin-top: 2px;
+}
+
+.slot .use,
+.item-row .use {
+  flex-shrink: 0;
+  min-height: 36px;
+  min-width: 56px;
+  margin: 0;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 8px;
+  background: var(--neon);
+  color: #04110f;
+  font-size: 13px;
+  font-weight: 800;
+  width: auto;
+  letter-spacing: 0;
+}
+
+.slot.empty {
+  opacity: 0.7;
+}
+
+#confirm-text {
+  font-size: 16px;
+  margin: 0 0 12px;
+}
+
+#confirm-card {
+  width: min(360px, 100%);
+}
+
+#log {
+  left: 12px;
+  right: 12px;
+  padding: 0 76px;
 }

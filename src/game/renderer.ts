@@ -1,5 +1,5 @@
 import type { GameMap } from "./map";
-import type { FloatText, Phase, Tile, Unit, Vec2, Yaw } from "./types";
+import type { FloatText, Phase, Tile, Unit, Vec2 } from "./types";
 import { DIRS, key, nextYaw, yawDir, yawPoint } from "./types";
 
 /** Diamond width (2:1 orthogonal isometric). */
@@ -22,11 +22,6 @@ function iso(x: number, y: number, h = 0): Vec2 {
     x: (x - y) * (TILE_W / 2),
     y: (x + y) * (TILE_H / 2) - h * BLOCK,
   };
-}
-
-function pointInDiamond(px: number, py: number, cx: number, cy: number, hw: number, hh: number): boolean {
-  if (hw <= 0 || hh <= 0) return false;
-  return Math.abs(px - cx) / hw + Math.abs(py - cy) / hh <= 1.02;
 }
 
 function pointInTri(
@@ -76,7 +71,7 @@ export class Renderer {
   w = 390;
   h = 700;
   time = 0;
-  yaw: Yaw = 0;
+  yaw = 0;
   private mapW = 10;
   private mapH = 12;
 
@@ -98,6 +93,17 @@ export class Renderer {
     this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   }
 
+  forceSize(w: number, h: number): void {
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    this.w = w;
+    this.h = h;
+    this.canvas.style.width = `${w}px`;
+    this.canvas.style.height = `${h}px`;
+    this.canvas.width = Math.floor(w * dpr);
+    this.canvas.height = Math.floor(h * dpr);
+    this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  }
+
   private syncMap(map: GameMap): void {
     this.mapW = map.w;
     this.mapH = map.h;
@@ -116,16 +122,73 @@ export class Renderer {
     };
   }
 
-  private topMetrics(x: number, y: number, h: number): { cx: number; cy: number; hw: number; hh: number; drop: number } {
-    const p = this.worldToScreen(x, y, h);
+  private topCorners(x: number, y: number, h: number): Vec2[] {
+    const off: Array<[number, number]> = [
+      [-0.5, -0.5],
+      [0.5, -0.5],
+      [0.5, 0.5],
+      [-0.5, 0.5],
+    ];
+    return off.map(([dx, dy]) => this.worldToScreen(x + dx, y + dy, h));
+  }
+
+  private topMetrics(x: number, y: number, h: number): { cx: number; cy: number; hw: number; hh: number; drop: number; top: Vec2[] } {
+    const top = this.topCorners(x, y, h);
+    let cx = 0;
+    let cy = 0;
+    for (const p of top) {
+      cx += p.x;
+      cy += p.y;
+    }
+    cx /= 4;
+    cy /= 4;
+    let hw = 0;
+    let hh = 0;
+    for (const p of top) {
+      hw = Math.max(hw, Math.abs(p.x - cx));
+      hh = Math.max(hh, Math.abs(p.y - cy));
+    }
     return {
-      cx: p.x,
-      cy: p.y,
-      hw: (TILE_W / 2) * this.cam.zoom,
-      hh: (TILE_H / 2) * this.cam.zoom,
+      cx,
+      cy,
+      hw,
+      hh,
       drop: (BASE + h * BLOCK) * this.cam.zoom,
+      top,
     };
   }
+
+  private frontFaces(top: Vec2[], drop: number): Array<[Vec2, Vec2, Vec2, Vec2]> {
+    const faces: Array<{ pts: [Vec2, Vec2, Vec2, Vec2]; y: number }> = [];
+    for (let i = 0; i < 4; i++) {
+      const a = top[i];
+      const b = top[(i + 1) % 4];
+      const c = { x: b.x, y: b.y + drop };
+      const d = { x: a.x, y: a.y + drop };
+      faces.push({ pts: [a, b, c, d], y: (a.y + b.y + c.y + d.y) / 4 });
+    }
+    faces.sort((a, b) => a.y - b.y);
+    return faces.slice(-2).map((f) => f.pts);
+  }
+
+  screenToGrid(sx: number, sy: number): Vec2 {
+    const ix = this.cam.x + (sx - this.w / 2) / this.cam.zoom;
+    const iy = this.cam.y + (sy - this.h / 2) / this.cam.zoom;
+    const rx = (ix / (TILE_W / 2) + iy / (TILE_H / 2)) / 2;
+    const ry = (iy / (TILE_H / 2) - ix / (TILE_W / 2)) / 2;
+    const c = Math.cos(this.yaw);
+    const s = Math.sin(this.yaw);
+    const dx = rx * c - ry * s;
+    const dy = rx * s + ry * c;
+    return { x: dx + (this.mapW - 1) / 2, y: dy + (this.mapH - 1) / 2 };
+  }
+
+  lockGridToScreen(gx: number, gy: number, h: number, sx: number, sy: number): void {
+    const p = this.isoOf(gx, gy, h);
+    this.cam.x = p.x - (sx - this.w / 2) / this.cam.zoom;
+    this.cam.y = p.y - (sy - this.h / 2) / this.cam.zoom;
+  }
+
 
   private cellsInDrawOrder(map: GameMap): Vec2[] {
     const cells: Vec2[] = [];
@@ -151,21 +214,12 @@ export class Renderer {
   }
 
   private hitPrism(sx: number, sy: number, t: Tile): boolean {
-    const { cx, cy, hw, hh, drop } = this.topMetrics(t.x, t.y, t.h);
-    if (pointInDiamond(sx, sy, cx, cy, hw, hh)) return true;
-    const left = [
-      { x: cx - hw, y: cy },
-      { x: cx, y: cy + hh },
-      { x: cx, y: cy + hh + drop },
-      { x: cx - hw, y: cy + drop },
-    ];
-    const right = [
-      { x: cx + hw, y: cy },
-      { x: cx, y: cy + hh },
-      { x: cx, y: cy + hh + drop },
-      { x: cx + hw, y: cy + drop },
-    ];
-    return pointInQuad(sx, sy, left[0], left[1], left[2], left[3]) || pointInQuad(sx, sy, right[0], right[1], right[2], right[3]);
+    const { drop, top } = this.topMetrics(t.x, t.y, t.h);
+    if (pointInQuad(sx, sy, top[0], top[1], top[2], top[3])) return true;
+    for (const [a, b, c, d] of this.frontFaces(top, drop)) {
+      if (pointInQuad(sx, sy, a, b, c, d)) return true;
+    }
+    return false;
   }
 
   rotate(map: GameMap): void {
@@ -254,10 +308,11 @@ export class Renderer {
     overlays: { move: Set<string>; action: Set<string>; skill: Set<string>; inspect: Vec2 | null },
   ): void {
     const ctx = this.ctx;
-    const { cx, cy, hw, hh, drop } = this.topMetrics(t.x, t.y, t.h);
+    const { cx, cy, hw, hh, drop, top } = this.topMetrics(t.x, t.y, t.h);
     const k = key(t.x, t.y);
     const checker = (t.x + t.y) % 2 === 0;
     const z = this.cam.zoom;
+    const faces = this.frontFaces(top, drop);
 
     let topCol = "#1a1a24";
     let leftCol = "#101018";
@@ -276,50 +331,50 @@ export class Renderer {
       rightCol = "#262030";
     }
 
-    ctx.beginPath();
-    ctx.moveTo(cx - hw, cy);
-    ctx.lineTo(cx, cy + hh);
-    ctx.lineTo(cx, cy + hh + drop);
-    ctx.lineTo(cx - hw, cy + drop);
-    ctx.closePath();
-    ctx.fillStyle = leftCol;
-    ctx.fill();
-
-    ctx.beginPath();
-    ctx.moveTo(cx + hw, cy);
-    ctx.lineTo(cx, cy + hh);
-    ctx.lineTo(cx, cy + hh + drop);
-    ctx.lineTo(cx + hw, cy + drop);
-    ctx.closePath();
-    ctx.fillStyle = rightCol;
-    ctx.fill();
+    const ordered = faces.slice().sort((a, b) => (a[0].x + a[1].x) / 2 - (b[0].x + b[1].x) / 2);
+    for (let fi = 0; fi < ordered.length; fi++) {
+      const [a, b, c, d] = ordered[fi];
+      ctx.beginPath();
+      ctx.moveTo(a.x, a.y);
+      ctx.lineTo(b.x, b.y);
+      ctx.lineTo(c.x, c.y);
+      ctx.lineTo(d.x, d.y);
+      ctx.closePath();
+      ctx.fillStyle = fi === 0 ? leftCol : rightCol;
+      ctx.fill();
+    }
 
     const seam = BLOCK * z;
     ctx.strokeStyle = "rgba(0,0,0,0.35)";
     ctx.lineWidth = 1;
     for (let i = 1; i <= t.h; i++) {
       const dy = i * seam;
-      ctx.beginPath();
-      ctx.moveTo(cx - hw, cy + dy);
-      ctx.lineTo(cx, cy + hh + dy);
-      ctx.lineTo(cx + hw, cy + dy);
-      ctx.stroke();
+      for (const face of faces) {
+        const a = face[0];
+        const b = face[1];
+        ctx.beginPath();
+        ctx.moveTo(a.x, a.y + dy);
+        ctx.lineTo(b.x, b.y + dy);
+        ctx.stroke();
+      }
     }
 
-    this.diamondPath(cx, cy, hw, hh);
+    this.quadPath(top);
     ctx.fillStyle = topCol;
     ctx.fill();
     ctx.strokeStyle = "rgba(120, 230, 255, 0.38)";
     ctx.lineWidth = 1.15;
     ctx.stroke();
+    let hi = 0;
+    for (let i = 1; i < 4; i++) if (top[i].y < top[hi].y) hi = i;
     ctx.beginPath();
-    ctx.moveTo(cx, cy - hh);
-    ctx.lineTo(cx + hw, cy);
+    ctx.moveTo(top[hi].x, top[hi].y);
+    ctx.lineTo(top[(hi + 1) % 4].x, top[(hi + 1) % 4].y);
     ctx.strokeStyle = "rgba(220, 245, 255, 0.28)";
     ctx.stroke();
     ctx.beginPath();
-    ctx.moveTo(cx, cy - hh);
-    ctx.lineTo(cx - hw, cy);
+    ctx.moveTo(top[hi].x, top[hi].y);
+    ctx.lineTo(top[(hi + 3) % 4].x, top[(hi + 3) % 4].y);
     ctx.strokeStyle = "rgba(40, 60, 80, 0.45)";
     ctx.stroke();
 
@@ -346,28 +401,28 @@ export class Renderer {
     this.drawProp(t, cx, cy, hw, hh, z);
 
     if (overlays.move.has(k)) {
-      this.diamondPath(cx, cy, hw * 0.92, hh * 0.92);
+      this.quadPath(this.insetQuad(top, 0.92));
       ctx.fillStyle = "rgba(62, 240, 208, 0.34)";
       ctx.fill();
       ctx.strokeStyle = "rgba(62, 240, 208, 0.9)";
       ctx.stroke();
     }
     if (overlays.action.has(k)) {
-      this.diamondPath(cx, cy, hw * 0.88, hh * 0.88);
+      this.quadPath(this.insetQuad(top, 0.88));
       ctx.fillStyle = "rgba(255, 77, 109, 0.36)";
       ctx.fill();
       ctx.strokeStyle = "rgba(255, 77, 109, 0.92)";
       ctx.stroke();
     }
     if (overlays.skill.has(k)) {
-      this.diamondPath(cx, cy, hw * 0.88, hh * 0.88);
+      this.quadPath(this.insetQuad(top, 0.88));
       ctx.fillStyle = "rgba(180, 140, 255, 0.36)";
       ctx.fill();
       ctx.strokeStyle = "rgba(200, 170, 255, 0.95)";
       ctx.stroke();
     }
     if (overlays.inspect && overlays.inspect.x === t.x && overlays.inspect.y === t.y) {
-      this.diamondPath(cx, cy, hw * 0.96, hh * 0.96);
+      this.quadPath(this.insetQuad(top, 0.96));
       ctx.strokeStyle = "rgba(255, 232, 160, 0.95)";
       ctx.lineWidth = 2;
       ctx.stroke();
@@ -382,6 +437,26 @@ export class Renderer {
     ctx.lineTo(cx, cy + hh);
     ctx.lineTo(cx - hw, cy);
     ctx.closePath();
+  }
+
+  private quadPath(pts: Vec2[]): void {
+    const ctx = this.ctx;
+    ctx.beginPath();
+    ctx.moveTo(pts[0].x, pts[0].y);
+    for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y);
+    ctx.closePath();
+  }
+
+  private insetQuad(pts: Vec2[], s: number): Vec2[] {
+    let cx = 0;
+    let cy = 0;
+    for (const p of pts) {
+      cx += p.x;
+      cy += p.y;
+    }
+    cx /= pts.length;
+    cy /= pts.length;
+    return pts.map((p) => ({ x: cx + (p.x - cx) * s, y: cy + (p.y - cy) * s }));
   }
 
   private drawProp(t: Tile, cx: number, cy: number, hw: number, hh: number, z: number): void {

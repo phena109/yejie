@@ -2,10 +2,11 @@ import type { MapDef } from "../game/map";
 import type { Dir, Unit, Vec2 } from "../game/types";
 
 function unit(
-  partial: Omit<Unit, "acted" | "skillUsed" | "skipNext" | "dead" | "lunge" | "dir" | "movedThisTurn" | "actedThisTurn" | "npc"> & {
+  partial: Omit<Unit, "acted" | "skillUsed" | "skipNext" | "dead" | "lunge" | "dir" | "movedThisTurn" | "actedThisTurn" | "npc" | "atkBuff"> & {
     dir?: Dir;
     acted?: boolean;
     npc?: boolean;
+    atkBuff?: number;
   },
 ): Unit {
   return {
@@ -18,6 +19,7 @@ function unit(
     movedThisTurn: false,
     actedThisTurn: false,
     npc: partial.npc ?? false,
+    atkBuff: partial.atkBuff ?? 0,
     ...partial,
   };
 }

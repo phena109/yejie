@@ -2,6 +2,18 @@ import { MISSIONS, makePlayerUnits, type Mission } from "../data/mission";
 import { planEnemy } from "./ai";
 import { makeAttackForecast, makeSkillForecast } from "./combat";
 import { PointerInput } from "./input";
+import {
+  BANDAGE_HEAL,
+  ITEMS,
+  START_INVENTORY,
+  STIM_ATK,
+  addItem,
+  cloneInventory,
+  itemAllies,
+  takeItem,
+  type ItemId,
+  type ItemStack,
+} from "./items";
 import { GameMap } from "./map";
 import {
   attackableFrom,
@@ -12,9 +24,21 @@ import {
 } from "./pathfinding";
 import { Renderer } from "./renderer";
 import {
+  SLOT_COUNT,
+  formatStamp,
+  latestSave,
+  loadStore,
+  writeStore,
+  type SaveGame,
+  type SavedUnit,
+} from "./save";
+import {
+  DIFF_LABEL,
   delay,
   dirFromTo,
   key,
+  scaleEnemy,
+  type Diff,
   type FloatText,
   type Forecast,
   type Inspect,
@@ -57,7 +81,7 @@ const TEAM_LABEL = { player: "我軍", enemy: "敵軍" };
 export class Game {
   map: GameMap;
   units: Unit[] = [];
-  phase: Phase = "briefing";
+  phase: Phase = "title";
   turn = 1;
   selected: Unit | null = null;
   origin: Vec2 | null = null;
@@ -73,6 +97,12 @@ export class Game {
   log = "";
   missionIndex = 0;
   loseKind: "wipe" | "protect" = "wipe";
+  intel: Diff = "M";
+  power: Diff = "M";
+  inventory: ItemStack[] = cloneInventory(START_INVENTORY);
+  pendingItem: ItemId | null = null;
+  m1DropGiven = false;
+  modalKind: "off" | "bag" | "save" | "load" | "target" = "off";
 
   renderer: Renderer;
   input: PointerInput;
@@ -89,11 +119,18 @@ export class Game {
   private chipHpFill = el<HTMLElement>("chip-hp-fill");
   private forecastEl = el<HTMLElement>("forecast");
   private logEl = el<HTMLElement>("log");
+  private title = el<HTMLElement>("title");
   private briefing = el<HTMLElement>("briefing");
   private result = el<HTMLElement>("result");
   private resultKicker = el<HTMLElement>("result-kicker");
   private resultTitle = el<HTMLElement>("result-title");
   private resultBody = el<HTMLElement>("result-body");
+  private modal = el<HTMLElement>("modal");
+  private modalKicker = el<HTMLElement>("modal-kicker");
+  private modalTitle = el<HTMLElement>("modal-title");
+  private modalBody = el<HTMLElement>("modal-body");
+  private confirmEl = el<HTMLElement>("confirm");
+  private confirmText = el<HTMLElement>("confirm-text");
   private btnCancel = el<HTMLButtonElement>("btn-cancel");
   private btnWait = el<HTMLButtonElement>("btn-wait");
   private btnSkill = el<HTMLButtonElement>("btn-skill");
@@ -101,6 +138,12 @@ export class Game {
   private btnEnd = el<HTMLButtonElement>("btn-end");
   private btnNext = el<HTMLButtonElement>("btn-next");
   private btnRotate = el<HTMLButtonElement>("btn-rotate");
+  private btnBag = el<HTMLButtonElement>("btn-bag");
+  private btnSave = el<HTMLButtonElement>("btn-save");
+  private btnContinue = el<HTMLButtonElement>("btn-continue");
+  private camHint = el<HTMLElement>("cam-hint");
+  private yawSlider = el<HTMLInputElement>("yaw-slider");
+  private pendingSlot: number | null = null;
 
   constructor(canvas: HTMLCanvasElement) {
     this.renderer = new Renderer(canvas);
@@ -108,6 +151,9 @@ export class Game {
     this.input.onTap = (p) => this.onTap(p);
     this.map = new GameMap(this.mission.map);
     this.resetBattle();
+    this.phase = "title";
+    this.briefing.hidden = true;
+    this.title.hidden = false;
 
     window.addEventListener("resize", () => this.renderer.resize());
     el<HTMLButtonElement>("btn-start").addEventListener("click", () => this.begin());
@@ -119,6 +165,26 @@ export class Game {
     this.btnConfirm.addEventListener("click", () => void this.confirm());
     this.btnEnd.addEventListener("click", () => void this.endTurn());
     this.btnRotate.addEventListener("click", () => this.rotateMap());
+    this.btnBag.addEventListener("click", () => this.openBag());
+    this.btnSave.addEventListener("click", () => this.openSaves("save"));
+    el<HTMLButtonElement>("btn-new").addEventListener("click", () => this.newGame());
+    this.btnContinue.addEventListener("click", () => this.continueGame());
+    el<HTMLButtonElement>("btn-load").addEventListener("click", () => this.openSaves("load"));
+    el<HTMLButtonElement>("btn-bag-title").addEventListener("click", () => this.openBag());
+    el<HTMLButtonElement>("modal-close").addEventListener("click", () => this.closeModal());
+    el<HTMLButtonElement>("confirm-yes").addEventListener("click", () => this.confirmYes());
+    el<HTMLButtonElement>("confirm-no").addEventListener("click", () => this.confirmNo());
+    this.bindSeg("seg-intel", (v) => {
+      this.intel = v;
+    });
+    this.bindSeg("seg-power", (v) => {
+      this.power = v;
+    });
+    this.yawSlider.addEventListener("input", () => {
+      this.renderer.yaw = Number(this.yawSlider.value) / 100;
+    });
+    this.modalBody.addEventListener("click", (e) => this.onModalClick(e));
+    this.refreshContinue();
   }
 
   get mission(): Mission {
@@ -127,8 +193,7 @@ export class Game {
 
   start(): void {
     const shot = /(?:^|[?&])shot(?:=|$|&)/.test(location.search) || location.hash.includes("shot");
-    let frames = 0;
-    const loop = () => {
+    const paint = () => {
       this.floats = this.floats.filter((f) => performance.now() - f.born < f.life);
       this.renderer.draw(
         this.map,
@@ -137,7 +202,9 @@ export class Game {
           move: this.phase === "select" ? this.moveTiles : new Set(),
           action: this.phase === "select" || this.phase === "forecast" ? this.actionTiles : new Set(),
           skill:
-            this.phase === "skillAim" || (this.phase === "forecast" && this.forecast?.kind === "skill")
+            this.phase === "skillAim" ||
+            this.phase === "itemAim" ||
+            (this.phase === "forecast" && this.forecast?.kind === "skill")
               ? this.skillTiles
               : new Set(),
           selected: this.selected,
@@ -147,25 +214,51 @@ export class Game {
         },
         this.floats,
       );
-      frames += 1;
-      if (!shot || frames < 20) requestAnimationFrame(loop);
+    };
+    this.syncUi();
+    if (shot) {
+      this.renderer.forceSize(390, 640);
+      this.renderer.centerOn(this.units, this.map);
+      for (let i = 0; i < 8; i++) paint();
+      const img = document.createElement("img");
+      img.alt = "board";
+      img.src = this.renderer.canvas.toDataURL("image/png");
+      img.style.cssText = "position:absolute;left:0;right:0;top:48px;width:100%;height:auto;z-index:1;pointer-events:none";
+      this.renderer.canvas.insertAdjacentElement("afterend", img);
+      return;
+    }
+    const loop = () => {
+      paint();
+      requestAnimationFrame(loop);
     };
     requestAnimationFrame(loop);
-    this.syncUi();
   }
 
   applyHash(): void {
     const hash = location.hash.replace("#", "");
+    if (hash === "inv") {
+      this.openBag();
+      return;
+    }
+    if (hash === "save") {
+      this.openSaves("load");
+      return;
+    }
     if (hash === "m2" || hash === "play2" || hash === "inspect" || hash === "play2rot") {
       this.missionIndex = 1;
       this.resetBattle();
+      this.title.hidden = true;
       if (hash === "m2") {
+        this.phase = "briefing";
         this.briefing.hidden = false;
         this.syncUi();
         return;
       }
       this.begin();
-      if (hash === "play2rot") this.rotateMap();
+      if (hash === "play2rot") {
+        this.renderer.yaw = Math.PI / 2;
+        this.renderer.centerOn(this.units, this.map);
+      }
       if (hash === "inspect") {
         const u = this.units.find((x) => x.id === "beckett") ?? this.units.find((x) => x.team === "enemy");
         if (u) {
@@ -178,11 +271,31 @@ export class Game {
       }
       return;
     }
-    if (hash === "play") {
+    if (hash === "play" || hash === "brief") {
+      this.title.hidden = true;
+      this.resetBattle();
+      if (hash === "brief") {
+        this.phase = "briefing";
+        this.briefing.hidden = false;
+        this.syncUi();
+        return;
+      }
       this.begin();
       const mara = this.units.find((u) => u.id === "mara");
       if (mara) this.selectUnit(mara);
     }
+  }
+
+  private bindSeg(id: string, set: (v: Diff) => void): void {
+    const root = el<HTMLElement>(id);
+    root.addEventListener("click", (e) => {
+      const btn = (e.target as HTMLElement).closest("button");
+      if (!btn) return;
+      const v = btn.getAttribute("data-v");
+      if (v !== "L" && v !== "M" && v !== "H") return;
+      for (const b of root.querySelectorAll("button")) b.classList.toggle("on", b === btn);
+      set(v);
+    });
   }
 
   private inspectPos(): Vec2 | null {
@@ -227,29 +340,52 @@ export class Game {
     const m = this.mission;
     this.map = new GameMap(m.map);
     this.units = [...makePlayerUnits(m.starts), ...m.makeOthers()];
+    for (const u of this.units) scaleEnemy(u, this.power);
     this.phase = "briefing";
     this.turn = 1;
     this.clearSel();
     this.inspect = null;
     this.busy = false;
     this.loseKind = "wipe";
-    this.log = "點選單位開始行動。可先攻擊或待機，不必先移動。拖曳平移，雙指縮放。";
+    this.pendingItem = null;
+    this.log = "點選單位開始行動。可先攻擊或待機，不必先移動。拖曳平移，雙指縮放並旋轉。";
     this.renderer.yaw = 0;
     this.renderer.centerOn(this.units, this.map);
     this.fillBriefing();
   }
 
+  private newGame(): void {
+    this.missionIndex = 0;
+    this.inventory = cloneInventory(START_INVENTORY);
+    this.m1DropGiven = false;
+    this.resetBattle();
+    this.title.hidden = true;
+    this.briefing.hidden = false;
+    this.phase = "briefing";
+    this.syncUi();
+    this.autosave();
+  }
+
+  private continueGame(): void {
+    const s = latestSave(loadStore());
+    if (!s) return;
+    this.applySave(s);
+  }
+
   private begin(): void {
     this.briefing.hidden = true;
+    this.title.hidden = true;
     this.phase = "select";
     this.renderer.centerOn(this.units, this.map);
     this.syncUi();
+    this.autosave();
   }
 
   private restart(): void {
     this.result.hidden = true;
     this.result.classList.remove("lose");
     this.briefing.hidden = false;
+    this.title.hidden = true;
     this.resetBattle();
     this.syncUi();
   }
@@ -260,13 +396,16 @@ export class Game {
     this.result.hidden = true;
     this.result.classList.remove("lose");
     this.briefing.hidden = false;
+    this.title.hidden = true;
     this.resetBattle();
     this.syncUi();
+    this.autosave();
   }
 
   private rotateMap(): void {
-    if (this.phase === "briefing") return;
+    if (this.phase === "briefing" || this.phase === "title") return;
     this.renderer.rotate(this.map);
+    this.yawSlider.value = String(Math.round(((this.renderer.yaw % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2) * 100));
   }
 
   private clearSel(): void {
@@ -277,6 +416,7 @@ export class Game {
     this.actionTiles.clear();
     this.skillTiles.clear();
     this.forecast = null;
+    this.pendingItem = null;
   }
 
   private locked(): boolean {
@@ -290,6 +430,7 @@ export class Game {
     this.origin = null;
     this.forecast = null;
     this.inspect = null;
+    this.pendingItem = null;
     this.refreshRanges(u);
     this.phase = "select";
     this.log = `${u.name}　移動 ${u.mov}　跳躍 ${u.jmp}　可先攻擊或待機`;
@@ -313,7 +454,7 @@ export class Game {
     this.phase = "select";
     const bits: string[] = [];
     if (!u.movedThisTurn) bits.push("可移動");
-    if (!u.actedThisTurn) bits.push("可攻擊／技能");
+    if (!u.actedThisTurn) bits.push("可攻擊／技能／道具");
     this.log = bits.length ? bits.join("　") : "結束或待機";
     this.syncUi();
   }
@@ -341,11 +482,18 @@ export class Game {
       return;
     }
     this.showCommand(u);
+    this.autosave();
   }
 
   private onTap(p: Vec2): void {
     if (this.busy) return;
-    if (this.phase === "briefing" || this.phase === "enemy" || this.phase === "victory" || this.phase === "defeat") {
+    if (
+      this.phase === "title" ||
+      this.phase === "briefing" ||
+      this.phase === "enemy" ||
+      this.phase === "victory" ||
+      this.phase === "defeat"
+    ) {
       return;
     }
     const tile = this.renderer.hitTile(p.x, p.y, this.map);
@@ -358,6 +506,11 @@ export class Game {
     if (this.phase === "skillAim") {
       if (tile) this.trySkillTarget(tile);
       else this.backFromSkill();
+      return;
+    }
+    if (this.phase === "itemAim") {
+      if (tile) this.tryItemTarget(tile);
+      else this.backFromItem();
       return;
     }
     if (this.phase !== "select") return;
@@ -435,6 +588,15 @@ export class Game {
     this.syncUi();
   }
 
+  private tryItemTarget(tile: Vec2): void {
+    const t = itemAllies(this.units).find((u) => u.x === tile.x && u.y === tile.y);
+    if (!t) {
+      this.backFromItem();
+      return;
+    }
+    void this.applyItem(t);
+  }
+
   private backFromForecast(): void {
     if (!this.selected) return;
     if (this.skillTiles.size && this.forecast?.kind === "skill") {
@@ -453,6 +615,16 @@ export class Game {
     if (this.selected) this.showCommand(this.selected);
   }
 
+  private backFromItem(): void {
+    this.pendingItem = null;
+    this.skillTiles.clear();
+    if (this.selected) this.showCommand(this.selected);
+    else {
+      this.phase = "select";
+      this.syncUi();
+    }
+  }
+
   cancel(): void {
     if (this.busy) return;
     if (this.phase === "forecast") {
@@ -461,6 +633,10 @@ export class Game {
     }
     if (this.phase === "skillAim") {
       this.backFromSkill();
+      return;
+    }
+    if (this.phase === "itemAim") {
+      this.backFromItem();
       return;
     }
     if (this.inspect) {
@@ -522,6 +698,7 @@ export class Game {
       target.hp = Math.max(0, target.hp - f.dmg);
       this.spawnFloat(target, `${f.dmg}`, "#ffd0d8");
       this.log = `${actor.name} 對 ${target.name} 造成 ${f.dmg} 傷害`;
+      if (actor.atkBuff) actor.atkBuff = 0;
       if (f.skip) {
         target.skipNext = true;
         this.log += "　攔住生效";
@@ -544,6 +721,7 @@ export class Game {
     this.forecast = null;
     this.skillTiles.clear();
     this.showCommand(actor);
+    this.autosave();
   }
 
   private async finishUnit(): Promise<void> {
@@ -555,6 +733,7 @@ export class Game {
     this.inspect = null;
     this.phase = "select";
     this.syncUi();
+    this.autosave();
     if (this.units.filter((u) => u.team === "player" && !u.dead && !u.acted && !u.npc).length === 0) {
       await this.endTurn();
     }
@@ -584,7 +763,7 @@ export class Game {
         await delay(420);
         continue;
       }
-      const plan = planEnemy(e, this.map, this.units, protectId);
+      const plan = planEnemy(e, this.map, this.units, protectId, this.intel);
       for (let i = 1; i < plan.path.length; i++) {
         e.dir = dirFromTo(plan.path[i - 1], plan.path[i]);
         e.x = plan.path[i].x;
@@ -626,6 +805,7 @@ export class Game {
     this.busy = false;
     this.log = "我軍階段";
     this.syncUi();
+    this.autosave();
   }
 
   private checkEnd(): boolean {
@@ -661,9 +841,16 @@ export class Game {
     this.result.classList.remove("lose");
     this.resultKicker.textContent = "勝利";
     this.resultTitle.textContent = m.winTitle;
-    this.resultBody.textContent = m.winBody;
+    let body = m.winBody;
+    if (this.missionIndex === 0 && !this.m1DropGiven) {
+      addItem(this.inventory, "bandage", 1);
+      this.m1DropGiven = true;
+      body = `${m.winBody}　又找到一盒繃帶。`;
+    }
+    this.resultBody.textContent = body;
     this.btnNext.hidden = this.missionIndex >= MISSIONS.length - 1;
     this.syncUi();
+    this.autosave();
   }
 
   private lose(): void {
@@ -684,6 +871,7 @@ export class Game {
     }
     this.btnNext.hidden = true;
     this.syncUi();
+    this.autosave();
   }
 
   private unitAt(x: number, y: number): Unit | undefined {
@@ -694,12 +882,353 @@ export class Game {
     this.floats.push({ x: u.x, y: u.y, text, color, born: performance.now(), life: 900 });
   }
 
+  private playable(): boolean {
+    return this.phase === "select" || this.phase === "skillAim" || this.phase === "forecast" || this.phase === "itemAim";
+  }
+
+  private openBag(): void {
+    this.modalKind = "bag";
+    this.modal.hidden = false;
+    this.modalKicker.textContent = "道具";
+    this.modalTitle.textContent = "背包";
+    this.paintBag();
+  }
+
+  private paintBag(): void {
+    this.modalBody.innerHTML = "";
+    const canUse = this.playable() && !!this.selected && !this.selected.actedThisTurn && !this.busy;
+    if (!this.inventory.length) {
+      const p = document.createElement("p");
+      p.textContent = "沒有道具。";
+      this.modalBody.appendChild(p);
+      return;
+    }
+    if (this.playable() && !this.selected) {
+      const note = document.createElement("p");
+      note.textContent = "先選單位再用道具。";
+      this.modalBody.appendChild(note);
+    }
+    for (const stack of this.inventory) {
+      const def = ITEMS[stack.id];
+      const row = document.createElement("div");
+      row.className = "item-row";
+      const info = document.createElement("div");
+      const b = document.createElement("b");
+      b.textContent = `${def.name} ×${stack.qty}`;
+      const s = document.createElement("span");
+      s.textContent = def.hint;
+      info.append(b, s);
+      row.appendChild(info);
+      if (this.playable()) {
+        const use = document.createElement("button");
+        use.type = "button";
+        use.className = "use";
+        use.dataset.item = stack.id;
+        use.textContent = "使用";
+        use.disabled = !canUse;
+        row.appendChild(use);
+      }
+      this.modalBody.appendChild(row);
+    }
+  }
+
+  private openSaves(kind: "save" | "load"): void {
+    this.modalKind = kind;
+    this.modal.hidden = false;
+    this.modalKicker.textContent = kind === "save" ? "存檔" : "讀檔";
+    this.modalTitle.textContent = kind === "save" ? "存檔" : "讀檔";
+    this.paintSaves();
+  }
+
+  private paintSaves(): void {
+    const store = loadStore();
+    this.modalBody.innerHTML = "";
+    for (let i = 0; i < SLOT_COUNT; i++) {
+      const s = store.slots[i];
+      const row = document.createElement("button");
+      row.type = "button";
+      row.className = s ? "slot" : "slot empty";
+      row.dataset.slot = String(i);
+      const info = document.createElement("div");
+      const b = document.createElement("b");
+      b.textContent = `檔案 ${i + 1}`;
+      const span = document.createElement("span");
+      span.textContent = s ? `${s.missionName}　${formatStamp(s.savedAt)}` : "空";
+      info.append(b, span);
+      row.appendChild(info);
+      this.modalBody.appendChild(row);
+    }
+  }
+
+  private onModalClick(e: Event): void {
+    const t = e.target as HTMLElement;
+    const use = t.closest("button.use") as HTMLButtonElement | null;
+    if (use && this.modalKind === "bag") {
+      const id = use.dataset.item;
+      if (id === "bandage" || id === "stim") this.armItem(id);
+      return;
+    }
+    const ally = t.closest("button.ally-row") as HTMLButtonElement | null;
+    if (ally && this.modalKind === "target") {
+      const id = ally.dataset.uid;
+      const u = this.units.find((x) => x.id === id);
+      if (u) void this.applyItem(u);
+      return;
+    }
+    const slot = t.closest("button.slot") as HTMLButtonElement | null;
+    if (slot && (this.modalKind === "save" || this.modalKind === "load")) {
+      const i = Number(slot.dataset.slot);
+      if (this.modalKind === "load") this.loadSlot(i);
+      else this.trySaveSlot(i);
+    }
+  }
+
+  private armItem(id: ItemId): void {
+    const u = this.selected;
+    if (!u || u.actedThisTurn || this.busy) {
+      this.log = "先選單位再用道具。";
+      this.syncUi();
+      return;
+    }
+    this.pendingItem = id;
+    this.closeModal();
+    this.inspect = null;
+    this.forecast = null;
+    this.moveTiles.clear();
+    this.actionTiles.clear();
+    const allies = itemAllies(this.units);
+    this.skillTiles = new Set(allies.map((a) => key(a.x, a.y)));
+    this.phase = "itemAim";
+    this.log = `${ITEMS[id].name}　選我軍單位`;
+    this.syncUi();
+    this.modalKind = "target";
+    this.modal.hidden = false;
+    this.modalKicker.textContent = ITEMS[id].name;
+    this.modalTitle.textContent = "選擇對象";
+    this.modalBody.innerHTML = "";
+    for (const a of allies) {
+      const row = document.createElement("button");
+      row.type = "button";
+      row.className = "ally-row";
+      row.dataset.uid = a.id;
+      const info = document.createElement("div");
+      const b = document.createElement("b");
+      b.textContent = a.name;
+      const s = document.createElement("span");
+      s.textContent = `生命 ${a.hp}/${a.maxHp}`;
+      info.append(b, s);
+      row.appendChild(info);
+      this.modalBody.appendChild(row);
+    }
+  }
+
+  private async applyItem(target: Unit): Promise<void> {
+    const actor = this.selected;
+    const id = this.pendingItem;
+    if (!actor || !id || actor.actedThisTurn || this.busy) return;
+    if (!itemAllies(this.units).some((u) => u.id === target.id)) return;
+    if (!takeItem(this.inventory, id)) return;
+    this.closeModal();
+    this.busy = true;
+    if (id === "bandage") {
+      const heal = Math.min(BANDAGE_HEAL, target.maxHp - target.hp);
+      target.hp = Math.min(target.maxHp, target.hp + BANDAGE_HEAL);
+      this.spawnFloat(target, `+${Math.max(heal, 0)}`, "#7dffb3");
+      this.log = `${actor.name} 對 ${target.name} 使用繃帶`;
+    } else {
+      target.atkBuff = STIM_ATK;
+      this.spawnFloat(target, "+ATK", "#ffc857");
+      this.log = `${actor.name} 對 ${target.name} 使用提神　下次攻擊 +5`;
+    }
+    actor.actedThisTurn = true;
+    this.pendingItem = null;
+    this.skillTiles.clear();
+    await delay(220);
+    this.busy = false;
+    if (actor.movedThisTurn) {
+      await this.finishUnit();
+      return;
+    }
+    this.showCommand(actor);
+    this.autosave();
+  }
+
+  private closeModal(): void {
+    this.modal.hidden = true;
+    this.modalKind = "off";
+    this.modalBody.innerHTML = "";
+  }
+
+  private trySaveSlot(i: number): void {
+    const store = loadStore();
+    if (store.slots[i]) {
+      this.pendingSlot = i;
+      this.confirmText.textContent = `覆蓋檔案 ${i + 1}？`;
+      this.confirmEl.hidden = false;
+      return;
+    }
+    this.writeSlot(i);
+  }
+
+  private confirmYes(): void {
+    this.confirmEl.hidden = true;
+    if (this.pendingSlot !== null) this.writeSlot(this.pendingSlot);
+    this.pendingSlot = null;
+  }
+
+  private confirmNo(): void {
+    this.confirmEl.hidden = true;
+    this.pendingSlot = null;
+  }
+
+  private writeSlot(i: number): void {
+    const store = loadStore();
+    store.slots[i] = this.captureSave();
+    writeStore(store);
+    this.pendingSlot = null;
+    this.log = `已存到檔案 ${i + 1}`;
+    this.closeModal();
+    this.refreshContinue();
+    this.syncUi();
+  }
+
+  private loadSlot(i: number): void {
+    const store = loadStore();
+    const s = store.slots[i];
+    if (!s) return;
+    this.closeModal();
+    this.applySave(s);
+  }
+
+  private captureSave(): SaveGame {
+    const play = this.playable() || this.phase === "enemy";
+    return {
+      v: 1,
+      savedAt: Date.now(),
+      missionIndex: this.missionIndex,
+      missionName: play ? `${this.mission.number}　戰鬥中` : this.mission.number,
+      phase: this.phase === "enemy" ? "select" : this.phase === "itemAim" || this.phase === "skillAim" || this.phase === "forecast" ? "select" : this.phase,
+      turn: this.turn,
+      intel: this.intel,
+      power: this.power,
+      inventory: cloneInventory(this.inventory),
+      units: this.units.map((u) => this.packUnit(u)),
+      cam: { ...this.renderer.cam },
+      yaw: this.renderer.yaw,
+      log: this.log,
+      selectedId: this.selected && play ? this.selected.id : null,
+      origin: this.origin ? { ...this.origin } : null,
+      originDir: this.originDir,
+      m1DropGiven: this.m1DropGiven,
+    };
+  }
+
+  private packUnit(u: Unit): SavedUnit {
+    return {
+      id: u.id,
+      x: u.x,
+      y: u.y,
+      hp: u.hp,
+      maxHp: u.maxHp,
+      atk: u.atk,
+      def: u.def,
+      dir: u.dir,
+      acted: u.acted,
+      skillUsed: u.skillUsed,
+      skipNext: u.skipNext,
+      dead: u.dead,
+      movedThisTurn: u.movedThisTurn,
+      actedThisTurn: u.actedThisTurn,
+      atkBuff: u.atkBuff,
+    };
+  }
+
+  private applySave(s: SaveGame): void {
+    this.missionIndex = s.missionIndex;
+    this.intel = s.intel;
+    this.power = s.power;
+    this.inventory = cloneInventory(s.inventory);
+    this.m1DropGiven = s.m1DropGiven;
+    this.turn = s.turn;
+    this.log = s.log;
+    this.setSeg("seg-intel", s.intel);
+    this.setSeg("seg-power", s.power);
+    this.map = new GameMap(this.mission.map);
+    const templates = [...makePlayerUnits(this.mission.starts), ...this.mission.makeOthers()];
+    const byId = new Map(templates.map((u) => [u.id, u]));
+    this.units = [];
+    for (const packed of s.units) {
+      const t = byId.get(packed.id);
+      if (!t) continue;
+      this.units.push({ ...t, ...packed });
+    }
+    this.renderer.cam = { ...s.cam };
+    this.renderer.yaw = s.yaw;
+    this.yawSlider.value = String(Math.round((((s.yaw % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2)) * 100));
+    this.clearSel();
+    this.inspect = null;
+    this.busy = false;
+    this.pendingItem = null;
+    this.fillBriefing();
+    this.result.hidden = true;
+    this.result.classList.remove("lose");
+    this.confirmEl.hidden = true;
+
+    const phase = s.phase;
+    this.phase = phase;
+    if (phase === "title") {
+      this.title.hidden = false;
+      this.briefing.hidden = true;
+    } else if (phase === "briefing") {
+      this.title.hidden = true;
+      this.briefing.hidden = false;
+    } else if (phase === "victory" || phase === "defeat") {
+      this.title.hidden = true;
+      this.briefing.hidden = true;
+      this.result.hidden = false;
+      if (phase === "defeat") this.result.classList.add("lose");
+    } else {
+      this.title.hidden = true;
+      this.briefing.hidden = true;
+      this.phase = "select";
+      if (s.selectedId) {
+        const u = this.units.find((x) => x.id === s.selectedId);
+        if (u && !u.dead && !u.acted && !u.npc) {
+          this.selected = u;
+          this.origin = s.origin;
+          this.originDir = s.originDir;
+          this.refreshRanges(u);
+        }
+      }
+    }
+    this.refreshContinue();
+    this.syncUi();
+  }
+
+  private setSeg(id: string, v: Diff): void {
+    const root = el<HTMLElement>(id);
+    for (const b of root.querySelectorAll("button")) b.classList.toggle("on", b.getAttribute("data-v") === v);
+  }
+
+  private autosave(): void {
+    if (this.phase === "title") return;
+    const store = loadStore();
+    store.autosave = this.captureSave();
+    writeStore(store);
+    this.refreshContinue();
+  }
+
+  private refreshContinue(): void {
+    this.btnContinue.disabled = !latestSave(loadStore());
+  }
+
   private paintUnitChip(u: Unit, inspecting: boolean): void {
     this.chip.hidden = false;
     this.chipHp.hidden = false;
     const team = u.npc ? "保護" : TEAM_LABEL[u.team];
     this.chipName.textContent = `${u.name}　${u.title}`;
-    this.chipMeta.textContent = `${team}　${ROLE_LABEL[u.role]}　生命 ${u.hp}/${u.maxHp}　攻擊 ${u.atk}　防禦 ${u.def}　移動 ${u.mov}　跳躍 ${u.jmp}`;
+    const buff = u.atkBuff ? `　攻擊+${u.atkBuff}` : "";
+    this.chipMeta.textContent = `${team}　${ROLE_LABEL[u.role]}　生命 ${u.hp}/${u.maxHp}　攻擊 ${u.atk}　防禦 ${u.def}　移動 ${u.mov}　跳躍 ${u.jmp}${buff}`;
     this.chipHpFill.style.width = `${(100 * u.hp) / u.maxHp}%`;
     this.chipMark.style.background = u.npc ? "#ffc857" : u.team === "player" ? "#3ef0d0" : "#ff4d6d";
     if (u.skillName) {
@@ -727,12 +1256,19 @@ export class Game {
   private syncUi(): void {
     this.hudTurn.textContent = `回合 ${this.turn}`;
     this.hudPhase.textContent =
-      this.phase === "enemy" ? "敵軍" : this.phase === "victory" ? "勝利" : this.phase === "defeat" ? "失敗" : "我軍";
-    this.hudSub.textContent = this.mission.hudSub;
+      this.phase === "enemy"
+        ? "敵軍"
+        : this.phase === "victory"
+          ? "勝利"
+          : this.phase === "defeat"
+            ? "失敗"
+            : this.phase === "title"
+              ? "選單"
+              : "我軍";
+    this.hudSub.textContent = `${this.mission.hudSub}　智 ${DIFF_LABEL[this.intel]}　力 ${DIFF_LABEL[this.power]}`;
     this.logEl.textContent = this.log;
 
-    const play =
-      this.phase === "select" || this.phase === "skillAim" || this.phase === "forecast";
+    const play = this.playable();
     const u = this.selected;
 
     if (this.inspect && play) {
@@ -753,7 +1289,7 @@ export class Game {
     }
 
     const commanding = !!u && this.phase === "select";
-    this.btnCancel.disabled = (!u && !this.inspect) || this.phase === "enemy" || this.busy;
+    this.btnCancel.disabled = (!u && !this.inspect && this.phase !== "itemAim") || this.phase === "enemy" || this.busy;
     this.btnWait.disabled = !commanding || this.busy;
     this.btnWait.textContent = u && (u.movedThisTurn || u.actedThisTurn) ? "結束" : "待機";
     this.btnSkill.disabled =
@@ -767,8 +1303,18 @@ export class Game {
     this.btnConfirm.disabled = this.phase !== "forecast" || this.busy;
     const leftover = this.units.some((x) => x.team === "player" && !x.dead && !x.acted && !x.npc);
     const hideChrome =
-      this.phase === "enemy" || this.phase === "briefing" || this.phase === "victory" || this.phase === "defeat";
+      this.phase === "enemy" ||
+      this.phase === "briefing" ||
+      this.phase === "title" ||
+      this.phase === "victory" ||
+      this.phase === "defeat";
     this.btnEnd.hidden = !leftover || hideChrome;
     this.btnRotate.hidden = hideChrome;
+    this.btnBag.hidden = hideChrome;
+    this.btnSave.hidden = hideChrome;
+    this.camHint.hidden = hideChrome;
+    const fine = window.matchMedia("(pointer: fine)").matches;
+    this.yawSlider.hidden = hideChrome || !fine;
+    this.refreshContinue();
   }
 }

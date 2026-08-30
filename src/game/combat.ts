@@ -19,7 +19,7 @@ export function strikeDamage(
   skill = false,
 ): { dmg: number; face: "front" | "side" | "back"; dh: number } {
   const face = facingOf(target, actor);
-  let raw = actor.atk - Math.floor(target.def * 0.5);
+  let raw = actor.atk + (actor.atkBuff || 0) - Math.floor(target.def * 0.5);
   const dh = map.heightAt(actor.x, actor.y) - map.heightAt(target.x, target.y);
   if (dh > 0) raw += 3;
   if (dh < 0) raw -= 2;

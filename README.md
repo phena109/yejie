@@ -2,7 +2,7 @@
 
 Mobile-first grid tactical RPG vertical slice.
 
-Portrait phone viewport. Touch only.
+Portrait phone viewport. Touch first.
 
 ## How to run
 
@@ -36,17 +36,57 @@ Win: defeat Beckett. Rowan Hale must still be alive.
 
 Lose: all three player units down, or Rowan Hale dies.
 
-View: orthogonal ~45° isometric. Diamond tiles. Height as stacked blocks (street / stairs / roof). Canvas 2.5D only. Four yaw facings, 90° snap, via 旋轉. Pan and pinch stay. Hit-testing follows the current yaw.
+View: orthogonal ~45° isometric. Diamond tiles. Height as stacked blocks (street / stairs / roof). Canvas 2.5D only. Two-finger twist rotates yaw freely (any degree). Pinch zooms. One-finger drag pans. Twist and pinch can happen together. 旋轉 still snaps 90°. Desktop debug: right-drag or the yaw slider. Hit-testing follows the current yaw.
 
 Inspect: tap terrain or a unit you did not pick as actor. Terrain shows name, height, walkable/blocked, street/stairs/roof, and any prop (stall, A/C, crate, lamp). Units show name, role, HP, atk/def/move/jump, skill name plus one line, and team. Cancel or tap empty UI dismisses inspect. Selecting your own unit for orders still works.
 
-Turn: Final Fantasy Tactics style. Move and Act are independent. You may act in place without moving, including 待機. You may move after acting. You may move then act. You may skip one of them. The unit turn ends on 待機, or when both Move and Act are used, or on 結束 after a partial turn. Undo still undoes the last uncommitted step. Attack, skill, and wait do not require a move first.
+Turn: Final Fantasy Tactics style. Move and Act are independent. You may act in place without moving, including 待機. You may move after acting. You may move then act. You may skip one of them. The unit turn ends on 待機, or when both Move and Act are used, or on 結束 after a partial turn. Undo still undoes the last uncommitted step. Attack, skill, wait, and items do not require a move first.
 
 Skills: usable once per that unit's turn, not once per battle. `skillUsed` resets when the unit can act again.
 
-Tactics are not dumbed down for mobile. Elevation, jump, climb cost, melee height limit, side and back damage, confirm/cancel, and undo of an uncommitted move stay. The only mobile compromise is the control scheme: tap, drag, pinch, large dock buttons, no hover, no right-click.
+Tactics are not dumbed down for mobile. Elevation, jump, climb cost, melee height limit, side and back damage, confirm/cancel, and undo of an uncommitted move stay. The only mobile compromise is the control scheme: tap, drag, pinch, two-finger rotate, large dock buttons, no hover.
 
-Language: people in the world speak English. Traditional Chinese is convenience UI only — a plain translation. Unit names are English. UI verbs are ordinary 繁中 (移動, 攻擊, 確認, 取消, 待機, 結束, 結束回合, 旋轉, 傷害, 勝利, 失敗, 下一場). Skill names: 重擊, 攔住, 包紮.
+Language: people in the world speak English. Traditional Chinese is convenience UI only — a plain translation. Unit names are English. UI verbs are ordinary 繁中 (移動, 攻擊, 確認, 取消, 待機, 結束, 結束回合, 旋轉, 傷害, 勝利, 失敗, 下一場, 新遊戲, 繼續, 讀檔, 存檔, 背包). Skill names: 重擊, 攔住, 包紮.
+
+## Start screen
+
+First thing you see is 夜界. Buttons: 新遊戲, 繼續, 讀檔, 背包.
+
+敵軍智力 and 敵軍戰力 are on this screen, each L 低 / M 中 / H 高, default M / M. 新遊戲 uses those two settings, then shows the mission 1 briefing.
+
+繼續 is disabled if there is no save. It loads the most recent slot or autosave.
+
+## Enemy intelligence (敵軍智力)
+
+Stored for the run.
+
+- L 低: attack the nearest obvious target. Little positioning. No height / facing / Hale priority.
+- M 中: current AI. Uses height. Does not suicidally ignore Hale in mission 2.
+- H 高: prefers back and side, uses height, focuses injured player units. In mission 2, pressures Hale if that wins faster.
+
+## Enemy power (敵軍戰力)
+
+Multipliers on enemy HP, ATK, and DEF, applied when spawning a mission.
+
+- L 低: 0.75
+- M 中: 1.0
+- H 高: 1.35
+
+## Inventory
+
+A bag kept between missions. Start: 繃帶 ×2 (回復 14 生命), 提神 ×1 (下次攻擊 +5). No shop.
+
+Open 背包 from the start screen (view) and during the player turn (use). Using an item: pick the item, pick a target (self or ally). Consumes one. Counts as that acting unit's Act; they can still Move after, per FFT rules.
+
+After a mission 1 win: 又找到一盒繃帶.
+
+## Save / load
+
+Three slots in localStorage, plus an autosave. Each stores mission, unit positions and HP, acted / skillUsed / dir, Hale if present, inventory, intel / power, camera, yaw.
+
+UI: 存檔 / 讀檔. Slot list shows mission name and timestamp. Overwrite asks 覆蓋此檔？ 繼續 loads the most recent.
+
+Autosave writes after briefing, battle start, unit finish, enemy phase, and win / lose, so 繼續 can resume a fight.
 
 ## Roster
 
@@ -59,16 +99,16 @@ Language: people in the world speak English. Traditional Chinese is convenience 
 ## What is in the slice
 
 - Two maps, each 10 by 12. Mission 01: street height 0, stairs height 1, rooftop height 2, market stalls and rooftop A/C as blocked props. Mission 02: alley, loading bay, fire-escape height, crates.
-- Full flow: briefing, fight, victory or defeat, 下一場 into mission 02, restart.
-- Select unit, show move and attack ranges together when both remain. Act in place, move after acting, or skip one. Wait ends the unit. Both used ends the unit. 結束回合 ends the player phase.
+- Full flow: start screen, settings, briefing, fight, victory or defeat, 下一場 into mission 02, restart.
+- Select unit, show move and attack ranges together when both remain. Act in place, move after acting, or skip one. Wait ends the unit. Both used ends the unit. 結束回合 ends the player phase. Items consume Act.
 - Tap a unit or tile to inspect. Tap an in-range enemy to preview damage, Confirm to strike.
-- Camera starts on the player team. Drag to pan. Pinch to zoom. 旋轉 snaps 90°.
+- Camera starts on the player team. Drag to pan. Pinch to zoom. Two-finger twist for free yaw.
 - Original canvas art: wet asphalt, market stalls, crates, rooftop units, isometric diamonds. No copyrighted assets.
 
 ## What was cut on purpose
 
-- Extra classes, extra maps beyond the two, jobs, loot, gacha, accounts.
-- No keyboard-first UI. Wheel zoom is a desktop debug extra only.
+- Extra classes, extra maps beyond the two, jobs, loot shop, gacha, accounts.
+- No keyboard-first UI. Wheel zoom and right-drag rotate are desktop debug extras only.
 
 See package.json scripts: install, dev, build, preview.
 
