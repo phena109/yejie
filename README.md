@@ -36,11 +36,11 @@ Win: defeat Beckett. Rowan Hale must still be alive.
 
 Lose: all three player units down, or Rowan Hale dies.
 
-View: orthogonal ~45° isometric. Diamond tiles. Height as stacked blocks (street / stairs / roof). Canvas 2.5D only. Two-finger twist rotates yaw freely (any degree). Pinch zooms. One-finger drag pans. Twist and pinch can happen together. 旋轉 still snaps 90°. Desktop debug: right-drag or the yaw slider. Hit-testing follows the current yaw.
+View: orthogonal ~45° isometric. Diamond tiles. Height as stacked blocks (street / stairs / roof). Canvas 2.5D only. Two-finger twist rotates yaw freely (any degree), inverted so the map sticks to the fingers. Two-finger up/down tilts pitch, locked 15°–75° (15 side-on, 75 top-down; default ~30° isometric). Pinch zooms. One-finger drag pans. Twist, pinch, and pitch can happen together. 旋轉 still snaps 90°. Desktop debug: right-drag (x yaw, y pitch) or the yaw/pitch sliders. Hit-testing follows the current yaw and pitch.
 
 Inspect: tap terrain or a unit you did not pick as actor. Terrain shows name, height, walkable/blocked, street/stairs/roof, and any prop (stall, A/C, crate, lamp). Units show name, role, HP, atk/def/move/jump, skill name plus one line, and team. Cancel or tap empty UI dismisses inspect. Selecting your own unit for orders still works.
 
-Turn: Final Fantasy Tactics style. Move and Act are independent. You may act in place without moving, including 待機. You may move after acting. You may move then act. You may skip one of them. The unit turn ends on 待機, or when both Move and Act are used, or on 結束 after a partial turn. Undo still undoes the last uncommitted step. Attack, skill, wait, and items do not require a move first.
+Turn: Final Fantasy Tactics style. Move and Act are independent. You may act in place without moving, including 待機. You may move after acting. You may move then act. You may skip one of them. After Act, leftover Move is not forced: deselect, command others, then come back later in the same player phase to move. The unit is only done when both Move and Act are used, or they 待機/結束 that unit (待機 means finished, and forfeits leftover move), or the player 結束回合. Done units show a small E and fade; the mark clears at the next player phase. Undo still undoes the last uncommitted step. Attack, skill, wait, and items do not require a move first.
 
 Skills: usable once per that unit's turn, not once per battle. `skillUsed` resets when the unit can act again.
 
@@ -78,11 +78,15 @@ A bag kept between missions. Start: 繃帶 ×2 (回復 14 生命), 提神 ×1 (�
 
 Open 背包 from the start screen (view) and during the player turn (use). Using an item: pick the item, pick a target (self or ally). Consumes one. Counts as that acting unit's Act; they can still Move after, per FFT rules.
 
+If the player loses and 再戰 / retries that fight, inventory reloads to the snapshot taken when the briefing was confirmed, not the emptied bag. HP of the three still restores as now.
+
+Enemies can drop 繃帶 or 提神 on death (~35% grunts, higher on the site lead). Float text 掉落 繃帶. Stacks cap at 9 so the bag cannot explode.
+
 After a mission 1 win: 又找到一盒繃帶.
 
 ## Save / load
 
-Three slots in localStorage, plus an autosave. Each stores mission, unit positions and HP, acted / skillUsed / dir, Hale if present, inventory, intel / power, camera, yaw.
+Three slots in localStorage, plus an autosave. Each stores mission, unit positions and HP, acted / skillUsed / dir, Hale if present, inventory, mission-start inventory snapshot, intel / power, camera, yaw, pitch.
 
 UI: 存檔 / 讀檔. Slot list shows mission name and timestamp. Overwrite asks 覆蓋此檔？ 繼續 loads the most recent.
 
@@ -100,9 +104,9 @@ Autosave writes after briefing, battle start, unit finish, enemy phase, and win 
 
 - Two maps, each 10 by 12. Mission 01: street height 0, stairs height 1, rooftop height 2, market stalls and rooftop A/C as blocked props. Mission 02: alley, loading bay, fire-escape height, crates.
 - Full flow: start screen, settings, briefing, fight, victory or defeat, 下一場 into mission 02, restart.
-- Select unit, show move and attack ranges together when both remain. Act in place, move after acting, or skip one. Wait ends the unit. Both used ends the unit. 結束回合 ends the player phase. Items consume Act.
+- Select unit, show move and attack ranges together when both remain. Act in place, move after acting, or skip one. After Act with Move left, deselect and return later. Wait ends the unit. Both used ends the unit. 結束回合 ends the player phase. Items consume Act. Done units show E and fade.
 - Tap a unit or tile to inspect. Tap an in-range enemy to preview damage, Confirm to strike.
-- Camera starts on the player team. Drag to pan. Pinch to zoom. Two-finger twist for free yaw.
+- Camera starts on the player team. Drag to pan. Pinch to zoom. Two-finger twist for free yaw (map follows fingers). Two-finger vertical tilts pitch 15–75.
 - Original canvas art: wet asphalt, market stalls, crates, rooftop units, isometric diamonds. No copyrighted assets.
 
 ## What was cut on purpose

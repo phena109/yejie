@@ -22,7 +22,7 @@ import {
   skillTargets,
   type MoveField,
 } from "./pathfinding";
-import { Renderer } from "./renderer";
+import { PITCH_DEFAULT, Renderer } from "./renderer";
 import {
   SLOT_COUNT,
   formatStamp,
@@ -100,6 +100,7 @@ export class Game {
   intel: Diff = "M";
   power: Diff = "M";
   inventory: ItemStack[] = cloneInventory(START_INVENTORY);
+  missionStartInventory: ItemStack[] = cloneInventory(START_INVENTORY);
   pendingItem: ItemId | null = null;
   m1DropGiven = false;
   modalKind: "off" | "bag" | "save" | "load" | "target" = "off";
@@ -143,6 +144,7 @@ export class Game {
   private btnContinue = el<HTMLButtonElement>("btn-continue");
   private camHint = el<HTMLElement>("cam-hint");
   private yawSlider = el<HTMLInputElement>("yaw-slider");
+  private pitchSlider = el<HTMLInputElement>("pitch-slider");
   private pendingSlot: number | null = null;
 
   constructor(canvas: HTMLCanvasElement) {
@@ -182,6 +184,9 @@ export class Game {
     });
     this.yawSlider.addEventListener("input", () => {
       this.renderer.yaw = Number(this.yawSlider.value) / 100;
+    });
+    this.pitchSlider.addEventListener("input", () => {
+      this.renderer.setPitch(Number(this.pitchSlider.value));
     });
     this.modalBody.addEventListener("click", (e) => this.onModalClick(e));
     this.refreshContinue();
@@ -259,6 +264,8 @@ export class Game {
         this.renderer.yaw = Math.PI / 2;
         this.renderer.centerOn(this.units, this.map);
       }
+      const dana2 = this.units.find((x) => x.id === "dana");
+      if (dana2 && hash !== "inspect") dana2.acted = true;
       if (hash === "inspect") {
         const u = this.units.find((x) => x.id === "beckett") ?? this.units.find((x) => x.team === "enemy");
         if (u) {
@@ -283,6 +290,8 @@ export class Game {
       this.begin();
       const mara = this.units.find((u) => u.id === "mara");
       if (mara) this.selectUnit(mara);
+      const dana = this.units.find((u) => u.id === "dana");
+      if (dana) dana.acted = true;
     }
   }
 
@@ -348,8 +357,9 @@ export class Game {
     this.busy = false;
     this.loseKind = "wipe";
     this.pendingItem = null;
-    this.log = "點選單位開始行動。可先攻擊或待機，不必先移動。拖曳平移，雙指縮放並旋轉。";
+    this.log = "點選單位開始行動。可先攻擊或待機，不必先移動。拖曳平移，雙指縮放並旋轉，上下俯仰。";
     this.renderer.yaw = 0;
+    this.renderer.setPitch(PITCH_DEFAULT);
     this.renderer.centerOn(this.units, this.map);
     this.fillBriefing();
   }
@@ -357,6 +367,7 @@ export class Game {
   private newGame(): void {
     this.missionIndex = 0;
     this.inventory = cloneInventory(START_INVENTORY);
+    this.missionStartInventory = cloneInventory(START_INVENTORY);
     this.m1DropGiven = false;
     this.resetBattle();
     this.title.hidden = true;
@@ -373,6 +384,7 @@ export class Game {
   }
 
   private begin(): void {
+    this.missionStartInventory = cloneInventory(this.inventory);
     this.briefing.hidden = true;
     this.title.hidden = true;
     this.phase = "select";
@@ -382,6 +394,7 @@ export class Game {
   }
 
   private restart(): void {
+    this.inventory = cloneInventory(this.missionStartInventory);
     this.result.hidden = true;
     this.result.classList.remove("lose");
     this.briefing.hidden = false;
@@ -421,20 +434,18 @@ export class Game {
 
   private locked(): boolean {
     const u = this.selected;
-    return !!u && (u.movedThisTurn || u.actedThisTurn);
+    // Uncommitted move still locks. Act without move does not — leftover move can wait.
+    return !!u && u.movedThisTurn;
   }
 
   private selectUnit(u: Unit): void {
     if (u.team !== "player" || u.acted || u.dead || u.npc) return;
     this.selected = u;
-    this.origin = null;
+    if (!u.movedThisTurn) this.origin = null;
     this.forecast = null;
     this.inspect = null;
     this.pendingItem = null;
-    this.refreshRanges(u);
-    this.phase = "select";
-    this.log = `${u.name}　移動 ${u.mov}　跳躍 ${u.jmp}　可先攻擊或待機`;
-    this.syncUi();
+    this.showCommand(u);
   }
 
   private refreshRanges(u: Unit): void {
@@ -706,6 +717,7 @@ export class Game {
       if (target.hp <= 0) {
         target.dead = true;
         this.log = `${target.name} 倒下。`;
+        this.tryEnemyDrop(target);
       }
     }
     if (f.kind === "skill") actor.skillUsed = true;
@@ -758,6 +770,7 @@ export class Game {
       if (this.phase === "victory" || this.phase === "defeat") break;
       if (e.skipNext) {
         e.skipNext = false;
+        e.acted = true;
         this.log = `${e.name} 被攔住，無法行動。`;
         this.syncUi();
         await delay(420);
@@ -791,10 +804,11 @@ export class Game {
       } else {
         await delay(120);
       }
+      e.acted = true;
     }
     for (const u of this.units) {
+      u.acted = false;
       if (u.team === "player" && !u.npc) {
-        u.acted = false;
         u.skillUsed = false;
         u.movedThisTurn = false;
         u.actedThisTurn = false;
@@ -880,6 +894,20 @@ export class Game {
 
   private spawnFloat(u: Unit, text: string, color: string): void {
     this.floats.push({ x: u.x, y: u.y, text, color, born: performance.now(), life: 900 });
+  }
+
+  private tryEnemyDrop(u: Unit): void {
+    if (u.team !== "enemy") return;
+    const chance = u.role === "elite" ? 0.62 : 0.35;
+    if (Math.random() >= chance) return;
+    const first: ItemId = Math.random() < 0.65 ? "bandage" : "stim";
+    const order: ItemId[] = first === "bandage" ? ["bandage", "stim"] : ["stim", "bandage"];
+    for (const id of order) {
+      if (addItem(this.inventory, id, 1) > 0) {
+        this.spawnFloat(u, `掉落 ${ITEMS[id].name}`, "#ffe08a");
+        return;
+      }
+    }
   }
 
   private playable(): boolean {
@@ -1115,11 +1143,13 @@ export class Game {
       units: this.units.map((u) => this.packUnit(u)),
       cam: { ...this.renderer.cam },
       yaw: this.renderer.yaw,
+      pitch: this.renderer.pitch,
       log: this.log,
       selectedId: this.selected && play ? this.selected.id : null,
       origin: this.origin ? { ...this.origin } : null,
       originDir: this.originDir,
       m1DropGiven: this.m1DropGiven,
+      missionStartInventory: cloneInventory(this.missionStartInventory),
     };
   }
 
@@ -1148,6 +1178,7 @@ export class Game {
     this.intel = s.intel;
     this.power = s.power;
     this.inventory = cloneInventory(s.inventory);
+    this.missionStartInventory = cloneInventory(s.missionStartInventory ?? s.inventory);
     this.m1DropGiven = s.m1DropGiven;
     this.turn = s.turn;
     this.log = s.log;
@@ -1164,7 +1195,9 @@ export class Game {
     }
     this.renderer.cam = { ...s.cam };
     this.renderer.yaw = s.yaw;
+    this.renderer.setPitch(s.pitch ?? PITCH_DEFAULT);
     this.yawSlider.value = String(Math.round((((s.yaw % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2)) * 100));
+    this.pitchSlider.value = String(Math.round(this.renderer.pitch));
     this.clearSel();
     this.inspect = null;
     this.busy = false;
@@ -1315,6 +1348,8 @@ export class Game {
     this.camHint.hidden = hideChrome;
     const fine = window.matchMedia("(pointer: fine)").matches;
     this.yawSlider.hidden = hideChrome || !fine;
+    this.pitchSlider.hidden = hideChrome || !fine;
+    this.pitchSlider.value = String(Math.round(this.renderer.pitch));
     this.refreshContinue();
   }
 }

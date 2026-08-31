@@ -36,11 +36,13 @@ export interface SaveGame {
   units: SavedUnit[];
   cam: Cam;
   yaw: number;
+  pitch: number;
   log: string;
   selectedId: string | null;
   origin: { x: number; y: number } | null;
   originDir: Dir;
   m1DropGiven: boolean;
+  missionStartInventory: ItemStack[];
 }
 
 export interface SaveStore {

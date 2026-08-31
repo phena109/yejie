@@ -2,14 +2,22 @@ import type { GameMap } from "./map";
 import type { FloatText, Phase, Tile, Unit, Vec2 } from "./types";
 import { DIRS, key, nextYaw, yawDir, yawPoint } from "./types";
 
-/** Diamond width (2:1 orthogonal isometric). */
+/** Diamond width at 45° yaw. Height and block scale with pitch. */
 export const TILE_W = 64;
-/** Diamond height. */
+/** Diamond height at default isometric pitch (30°). */
 export const TILE_H = 32;
-/** Vertical pixels per height step (stacked block). */
+/** Vertical pixels per height step at default pitch (30°). */
 export const BLOCK = 24;
-/** Ground slab under height-0 tiles. */
+/** Ground slab under height-0 tiles at default pitch. */
 export const BASE = 8;
+/** Camera elevation from horizontal, degrees. 15 = side-on, 75 = top-down. */
+export const PITCH_MIN = 15;
+export const PITCH_MAX = 75;
+export const PITCH_DEFAULT = 30;
+
+export function clampPitch(p: number): number {
+  return Math.min(PITCH_MAX, Math.max(PITCH_MIN, p));
+}
 
 export interface Cam {
   x: number;
@@ -17,10 +25,10 @@ export interface Cam {
   zoom: number;
 }
 
-function iso(x: number, y: number, h = 0): Vec2 {
+function iso(x: number, y: number, h: number, tileH: number, block: number): Vec2 {
   return {
     x: (x - y) * (TILE_W / 2),
-    y: (x + y) * (TILE_H / 2) - h * BLOCK,
+    y: (x + y) * (tileH / 2) - h * block,
   };
 }
 
@@ -72,8 +80,31 @@ export class Renderer {
   h = 700;
   time = 0;
   yaw = 0;
+  pitch = PITCH_DEFAULT;
   private mapW = 10;
   private mapH = 12;
+
+  tileH(): number {
+    return TILE_W * Math.sin((this.pitch * Math.PI) / 180);
+  }
+
+  blockH(): number {
+    const den = Math.cos((PITCH_DEFAULT * Math.PI) / 180);
+    return BLOCK * Math.cos((this.pitch * Math.PI) / 180) / den;
+  }
+
+  baseH(): number {
+    const den = Math.cos((PITCH_DEFAULT * Math.PI) / 180);
+    return BASE * Math.cos((this.pitch * Math.PI) / 180) / den;
+  }
+
+  addPitch(dyPx: number): void {
+    this.pitch = clampPitch(this.pitch + dyPx * 0.16);
+  }
+
+  setPitch(p: number): void {
+    this.pitch = clampPitch(p);
+  }
 
   constructor(canvas: HTMLCanvasElement) {
     this.canvas = canvas;
@@ -111,7 +142,7 @@ export class Renderer {
 
   isoOf(gx: number, gy: number, h = 0): Vec2 {
     const p = yawPoint(gx, gy, this.yaw, this.mapW, this.mapH);
-    return iso(p.x, p.y, h);
+    return iso(p.x, p.y, h, this.tileH(), this.blockH());
   }
 
   worldToScreen(x: number, y: number, h = 0): Vec2 {
@@ -153,7 +184,7 @@ export class Renderer {
       cy,
       hw,
       hh,
-      drop: (BASE + h * BLOCK) * this.cam.zoom,
+      drop: (this.baseH() + h * this.blockH()) * this.cam.zoom,
       top,
     };
   }
@@ -174,8 +205,10 @@ export class Renderer {
   screenToGrid(sx: number, sy: number): Vec2 {
     const ix = this.cam.x + (sx - this.w / 2) / this.cam.zoom;
     const iy = this.cam.y + (sy - this.h / 2) / this.cam.zoom;
-    const rx = (ix / (TILE_W / 2) + iy / (TILE_H / 2)) / 2;
-    const ry = (iy / (TILE_H / 2) - ix / (TILE_W / 2)) / 2;
+    const tw = TILE_W / 2;
+    const th = this.tileH() / 2;
+    const rx = (ix / tw + iy / th) / 2;
+    const ry = (iy / th - ix / tw) / 2;
     const c = Math.cos(this.yaw);
     const s = Math.sin(this.yaw);
     const dx = rx * c - ry * s;
@@ -344,7 +377,7 @@ export class Renderer {
       ctx.fill();
     }
 
-    const seam = BLOCK * z;
+    const seam = this.blockH() * z;
     ctx.strokeStyle = "rgba(0,0,0,0.35)";
     ctx.lineWidth = 1;
     for (let i = 1; i <= t.h; i++) {
@@ -575,6 +608,10 @@ export class Renderer {
     const x = p.x + dx;
     const y = p.y + dy - 6 * z;
 
+    const done = u.acted;
+    ctx.save();
+    if (done) ctx.globalAlpha *= 0.45;
+
     ctx.fillStyle = "rgba(0,0,0,0.38)";
     ctx.beginPath();
     ctx.ellipse(p.x, p.y + 4 * z, 11 * scale, 5.5 * scale, 0, 0, Math.PI * 2);
@@ -653,11 +690,25 @@ export class Renderer {
     ctx.textAlign = "center";
     ctx.fillText(u.name.split(" ")[0], x, y + 22 * scale);
 
-    if (u.acted && u.team === "player" && !u.npc) {
-      ctx.fillStyle = "rgba(0,0,0,0.35)";
+    ctx.restore();
+
+    if (done) {
+      const ex = x + 11 * scale;
+      const ey = y - 22 * scale;
+      const er = 7.2 * scale;
+      ctx.fillStyle = "rgba(8, 8, 14, 0.88)";
       ctx.beginPath();
-      ctx.arc(x, y - 4 * z, 16 * scale, 0, Math.PI * 2);
+      ctx.arc(ex, ey, er, 0, Math.PI * 2);
       ctx.fill();
+      ctx.strokeStyle = "rgba(220, 224, 232, 0.92)";
+      ctx.lineWidth = Math.max(1, 1.15 * z);
+      ctx.stroke();
+      ctx.fillStyle = "#e8eef2";
+      ctx.font = `bold ${Math.max(9, 11 * z)}px sans-serif`;
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText("E", ex, ey + 0.4 * scale);
+      ctx.textBaseline = "alphabetic";
     }
   }
 

@@ -5,6 +5,7 @@ export class PointerInput {
   private pointers = new Map<number, Vec2>();
   private lastPinch = 0;
   private lastAngle = 0;
+  private lastCentroid: Vec2 | null = null;
   private dragging = false;
   private start: Vec2 | null = null;
   private moved = 0;
@@ -60,6 +61,7 @@ export class PointerInput {
       this.lastPinch = this.pinchDist();
       this.lastAngle = this.pinchAngle();
       const c = this.centroid();
+      this.lastCentroid = c;
       this.pinchGrid = this.renderer.screenToGrid(c.x, c.y);
       this.dragging = true;
     }
@@ -77,7 +79,11 @@ export class PointerInput {
       const c = this.centroid();
       if (this.lastPinch > 0) {
         const factor = d / this.lastPinch;
-        this.renderer.yaw += ang - this.lastAngle;
+        // Invert twist so the map sticks to the fingers (iOS-map style).
+        this.renderer.yaw -= ang - this.lastAngle;
+        if (this.lastCentroid) {
+          this.renderer.addPitch(c.y - this.lastCentroid.y);
+        }
         this.zoomAtScreen(c.x, c.y, factor);
         if (this.pinchGrid) {
           this.renderer.lockGridToScreen(this.pinchGrid.x, this.pinchGrid.y, 0, c.x, c.y);
@@ -85,6 +91,7 @@ export class PointerInput {
       }
       this.lastPinch = d;
       this.lastAngle = ang;
+      this.lastCentroid = c;
       this.dragging = true;
       return;
     }
@@ -96,6 +103,7 @@ export class PointerInput {
     if (this.right) {
       const g = this.renderer.screenToGrid(this.renderer.w / 2, this.renderer.h / 2);
       this.renderer.yaw += dx * 0.01;
+      this.renderer.addPitch(dy);
       this.renderer.lockGridToScreen(g.x, g.y, 0, this.renderer.w / 2, this.renderer.h / 2);
       return;
     }
@@ -113,6 +121,7 @@ export class PointerInput {
     if (this.pointers.size < 2) {
       this.lastPinch = 0;
       this.pinchGrid = null;
+      this.lastCentroid = null;
     }
     if (this.pointers.size === 0) {
       if (!this.dragging && this.start && p) this.onTap(p);

@@ -15,6 +15,7 @@ export interface ItemStack {
 
 export const BANDAGE_HEAL = 14;
 export const STIM_ATK = 5;
+export const MAX_STACK = 9;
 
 export const ITEMS: Record<ItemId, ItemDef> = {
   bandage: { id: "bandage", name: "繃帶", hint: "回復 14 生命。" },
@@ -34,10 +35,14 @@ export function countItem(inv: ItemStack[], id: ItemId): number {
   return inv.find((s) => s.id === id)?.qty ?? 0;
 }
 
-export function addItem(inv: ItemStack[], id: ItemId, n = 1): void {
+export function addItem(inv: ItemStack[], id: ItemId, n = 1): number {
   const row = inv.find((s) => s.id === id);
-  if (row) row.qty += n;
-  else inv.push({ id, qty: n });
+  const cur = row?.qty ?? 0;
+  const add = Math.min(n, MAX_STACK - cur);
+  if (add <= 0) return 0;
+  if (row) row.qty += add;
+  else inv.push({ id, qty: add });
+  return add;
 }
 
 export function takeItem(inv: ItemStack[], id: ItemId): boolean {

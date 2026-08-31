@@ -248,13 +248,21 @@ body {
   pointer-events: none;
 }
 
-#yaw-slider {
+#yaw-slider,
+#pitch-slider {
   position: absolute;
   left: 12px;
   right: 12px;
-  bottom: calc(var(--dock-h) + env(safe-area-inset-bottom) + 102px);
   z-index: 7;
   height: 24px;
+}
+
+#yaw-slider {
+  bottom: calc(var(--dock-h) + env(safe-area-inset-bottom) + 126px);
+}
+
+#pitch-slider {
+  bottom: calc(var(--dock-h) + env(safe-area-inset-bottom) + 102px);
 }
 
 #btn-end[hidden],
@@ -262,7 +270,8 @@ body {
 #btn-bag[hidden],
 #btn-save[hidden],
 #cam-hint[hidden],
-#yaw-slider[hidden] {
+#yaw-slider[hidden],
+#pitch-slider[hidden] {
   display: none;
 }
 
