@@ -155,3 +155,26 @@ export function attackableFrom(
   }
   return s;
 }
+
+export function attackArea(x: number, y: number, map: GameMap): Set<string> {
+  const s = new Set<string>();
+  for (const d of DIRS) {
+    const nx = x + d.x;
+    const ny = y + d.y;
+    if (map.inBounds(nx, ny)) s.add(key(nx, ny));
+  }
+  return s;
+}
+
+export function skillArea(actor: Unit, map: GameMap): Set<string> {
+  if (actor.role === "striker") return attackArea(actor.x, actor.y, map);
+  const s = new Set<string>();
+  const max = actor.role === "controller" ? 3 : 1;
+  for (let y = 0; y < map.h; y++) {
+    for (let x = 0; x < map.w; x++) {
+      if (Math.abs(actor.x - x) + Math.abs(actor.y - y) <= max) s.add(key(x, y));
+    }
+  }
+  return s;
+}
+

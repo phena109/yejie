@@ -153,6 +153,7 @@ export const MISSIONS: Mission[] = [
     map: {
       w: 10,
       h: 12,
+      theme: "roof",
       heights: [
         "2222222222",
         "2222112222",
@@ -243,6 +244,7 @@ export const MISSIONS: Mission[] = [
     map: {
       w: 10,
       h: 12,
+      theme: "alley",
       heights: [
         "2220002222",
         "2210001222",

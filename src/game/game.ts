@@ -17,13 +17,15 @@ import {
 import { GameMap } from "./map";
 import {
   attackableFrom,
+  attackArea,
   computeMoveRange,
   reconstructPath,
+  skillArea,
   skillTargets,
   type MoveField,
 } from "./pathfinding";
 import { audio } from "./audio";
-import { PITCH_DEFAULT, Renderer } from "./renderer";
+import { PITCH_DEFAULT, Renderer, type AreaKind } from "./renderer";
 import {
   SLOT_COUNT,
   formatStamp,
@@ -93,6 +95,8 @@ export class Game {
   moveTiles = new Set<string>();
   actionTiles = new Set<string>();
   skillTiles = new Set<string>();
+  areaTiles = new Set<string>();
+  areaKind: AreaKind | null = null;
   forecast: Forecast | null = null;
   inspect: Inspect | null = null;
   floats: FloatText[] = [];
@@ -235,13 +239,9 @@ export class Game {
         this.units,
         {
           move: this.phase === "select" ? this.moveTiles : new Set(),
-          action: this.phase === "select" || this.phase === "forecast" ? this.actionTiles : new Set(),
-          skill:
-            this.phase === "skillAim" ||
-            this.phase === "itemAim" ||
-            (this.phase === "forecast" && this.forecast?.kind === "skill")
-              ? this.skillTiles
-              : new Set(),
+          area: this.overlayArea(),
+          hot: this.overlayHot(),
+          areaKind: this.overlayKind(),
           selected: this.selected,
           target: this.forecast?.target ?? null,
           inspect: this.inspectPos(),
@@ -460,6 +460,8 @@ export class Game {
     this.moveTiles.clear();
     this.actionTiles.clear();
     this.skillTiles.clear();
+    this.areaTiles.clear();
+    this.areaKind = null;
     this.forecast = null;
     this.pendingItem = null;
   }
@@ -489,7 +491,34 @@ export class Game {
       this.field = null;
       this.moveTiles.clear();
     }
-    this.actionTiles = u.actedThisTurn ? new Set() : attackableFrom(u, this.map, this.units, 2);
+    if (u.actedThisTurn) {
+      this.actionTiles = new Set();
+      this.areaTiles = new Set();
+      this.areaKind = null;
+    } else {
+      this.actionTiles = attackableFrom(u, this.map, this.units, 2);
+      this.areaTiles = attackArea(u.x, u.y, this.map);
+      this.areaKind = "attack";
+    }
+  }
+
+  private overlayArea(): Set<string> {
+    if (this.phase === "select" || this.phase === "skillAim" || this.phase === "forecast") return this.areaTiles;
+    return new Set();
+  }
+
+  private overlayHot(): Set<string> {
+    if (this.phase === "itemAim") return this.skillTiles;
+    if (this.phase === "skillAim" || (this.phase === "forecast" && this.forecast?.kind === "skill")) return this.skillTiles;
+    if (this.phase === "select" || this.phase === "forecast") return this.actionTiles;
+    return new Set();
+  }
+
+  private overlayKind(): AreaKind | null {
+    if (this.phase === "itemAim") return "item";
+    if (this.phase === "skillAim" || (this.phase === "forecast" && this.forecast?.kind === "skill")) return "skill";
+    if (this.phase === "select" || this.phase === "forecast") return this.areaKind;
+    return null;
   }
 
   private showCommand(u: Unit): void {
@@ -712,6 +741,8 @@ export class Game {
     if (this.phase !== "select" && this.phase !== "skillAim") return;
     const targets = skillTargets(u, this.map, this.units);
     this.skillTiles = new Set(targets.map((t) => key(t.x, t.y)));
+    this.areaTiles = skillArea(u, this.map);
+    this.areaKind = "skill";
     this.actionTiles.clear();
     this.moveTiles.clear();
     this.forecast = null;
@@ -1169,6 +1200,8 @@ export class Game {
     this.forecast = null;
     this.moveTiles.clear();
     this.actionTiles.clear();
+    this.areaTiles.clear();
+    this.areaKind = "item";
     const allies = itemAllies(this.units);
     this.skillTiles = new Set(allies.map((a) => key(a.x, a.y)));
     this.phase = "itemAim";

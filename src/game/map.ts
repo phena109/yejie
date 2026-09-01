@@ -1,8 +1,11 @@
 import { type Prop, type Terrain, type Tile, key } from "./types";
 
+export type MapTheme = "roof" | "alley";
+
 export interface MapDef {
   w: number;
   h: number;
+  theme?: MapTheme;
   heights: string[];
   blocked: Array<[number, number, Prop]>;
   lamps?: Array<[number, number]>;
@@ -11,11 +14,13 @@ export interface MapDef {
 export class GameMap {
   readonly w: number;
   readonly h: number;
+  readonly theme: MapTheme;
   readonly tiles: Tile[][] = [];
 
   constructor(def: MapDef) {
     this.w = def.w;
     this.h = def.h;
+    this.theme = def.theme ?? "roof";
     const block = new Map<string, Prop>();
     for (const [x, y, p] of def.blocked) block.set(key(x, y), p);
     const lamps = new Set((def.lamps ?? []).map(([x, y]) => key(x, y)));
