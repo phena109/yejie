@@ -1,6 +1,6 @@
 import type { GameMap } from "./map";
 import type { Forecast, Unit } from "./types";
-import { DIRS } from "./types";
+import { DIRS, isHostilePair } from "./types";
 
 export function facingOf(defender: Unit, attacker: Unit): "front" | "side" | "back" {
   const dx = attacker.x - defender.x;
@@ -25,7 +25,30 @@ export function strikeDamage(
   if (dh < 0) raw -= 2;
   if (face === "side") raw = Math.floor(raw * 1.25);
   if (face === "back") raw = Math.floor(raw * 1.5);
-  if (skill && actor.role === "striker") raw = Math.floor(raw * 1.4);
+  if (skill) {
+    switch (actor.skillKind) {
+      case "strike":
+        raw = Math.floor(raw * 1.4);
+        break;
+      case "slash":
+        raw = Math.floor(raw * 1.3);
+        break;
+      case "spark":
+        raw = actor.atk + (actor.atkBuff || 0) - Math.floor(target.def * 0.2) + (dh > 0 ? 2 : 0);
+        break;
+      case "pounce":
+        raw = Math.floor(raw * 1.35);
+        break;
+      case "hook":
+        raw = Math.floor(raw * 1.45);
+        break;
+      case "shot":
+        raw = Math.floor(raw * 1.15);
+        break;
+      default:
+        if (actor.role === "striker") raw = Math.floor(raw * 1.4);
+    }
+  }
   return { dmg: Math.max(1, raw), face, dh };
 }
 
@@ -41,7 +64,7 @@ export function makeAttackForecast(
   const bits: string[] = [FACE_LABEL[face]];
   if (dh > 0) bits.push("高地 +3");
   if (dh < 0) bits.push("仰攻 −2");
-  if (skill && actor.role === "striker") bits.push("重擊 +40%");
+  if (skill && actor.skillName) bits.push(actor.skillName);
   return {
     kind: skill ? "skill" : "attack",
     actor,
@@ -55,13 +78,9 @@ export function makeAttackForecast(
   };
 }
 
-export function makeSkillForecast(
-  actor: Unit,
-  target: Unit,
-  map: GameMap,
-): Forecast {
-  if (actor.role === "striker") return makeAttackForecast(actor, target, map, true);
-  if (actor.role === "controller") {
+export function makeSkillForecast(actor: Unit, target: Unit, map: GameMap): Forecast {
+  const kind = actor.skillKind;
+  if (kind === "halt" || actor.role === "controller") {
     return {
       kind: "skill",
       actor,
@@ -74,16 +93,25 @@ export function makeSkillForecast(
       face: facingOf(target, actor),
     };
   }
-  const heal = 16;
-  return {
-    kind: "skill",
-    actor,
-    target,
-    label: `${actor.skillName}　${actor.name} → ${target.name}`,
-    detail: `回復 ${heal} 生命`,
-    dmg: 0,
-    heal,
-    skip: false,
-    face: "front",
-  };
+  if (kind === "heal" || actor.role === "support") {
+    const heal = 16;
+    return {
+      kind: "skill",
+      actor,
+      target,
+      label: `${actor.skillName}　${actor.name} → ${target.name}`,
+      detail: `回復 ${heal} 生命`,
+      dmg: 0,
+      heal,
+      skip: false,
+      face: "front",
+    };
+  }
+  return makeAttackForecast(actor, target, map, true);
+}
+
+export function canTargetUnit(actor: Unit, target: Unit): boolean {
+  if (target.dead || target.id === actor.id) return false;
+  if (actor.skillKind === "heal") return target.stance === "friendly" || target.team === "player";
+  return isHostilePair(actor, target) || (actor.team === "player" && !actor.npc && target.stance !== "friendly");
 }

@@ -19,11 +19,14 @@ import {
   attackableFrom,
   attackArea,
   computeMoveRange,
+  inAttackRange,
   reconstructPath,
   skillArea,
   skillTargets,
   type MoveField,
 } from "./pathfinding";
+import { BARREL_BLAST } from "./objects";
+import { ATTACK_MS, CAST_MS } from "./rig";
 import { audio } from "./audio";
 import { PITCH_DEFAULT, Renderer, type AreaKind } from "./renderer";
 import {
@@ -35,13 +38,16 @@ import {
   type SaveGame,
   type SavedUnit,
 } from "./save";
-import { loadSprites } from "./sprites";
 import {
   DIFF_LABEL,
   delay,
   dirFromTo,
+  factionColor,
+  isPlayerControlled,
   key,
+  provoke,
   scaleEnemy,
+  stanceOf,
   type Diff,
   type FloatText,
   type Forecast,
@@ -66,6 +72,12 @@ const ROLE_LABEL: Record<Unit["role"], string> = {
   grunt: "現場",
   elite: "主管",
   civilian: "文官",
+  delinquent: "街頭",
+  magician: "術者",
+  wolverine: "爪獸",
+  boxer: "拳手",
+  gunner: "槍手",
+  worker: "工人",
 };
 
 const TERRAIN_LABEL: Record<Tile["terrain"], string> = {
@@ -81,7 +93,7 @@ const PROP_LABEL: Record<NonNullable<Tile["prop"]>, string> = {
   crate: "貨箱",
 };
 
-const TEAM_LABEL = { player: "我軍", enemy: "敵軍" };
+const STANCE_LABEL = { friendly: "友方", hostile: "敵對", neutral: "中立" };
 
 export class Game {
   map: GameMap;
@@ -149,6 +161,7 @@ export class Game {
   private btnNext = el<HTMLButtonElement>("btn-next");
   private btnRotate = el<HTMLButtonElement>("btn-rotate");
   private btnPause = el<HTMLButtonElement>("btn-pause");
+  private btnBag = el<HTMLButtonElement>("btn-bag");
   private btnContinue = el<HTMLButtonElement>("btn-continue");
   private btnMute = el<HTMLButtonElement>("btn-mute");
   private pauseEl = el<HTMLElement>("pause");
@@ -180,6 +193,7 @@ export class Game {
     this.btnEnd.addEventListener("click", () => void this.endTurn());
     this.btnRotate.addEventListener("click", () => this.rotateMap());
     this.btnPause.addEventListener("click", () => this.openPause());
+    this.btnBag.addEventListener("click", () => this.openBagFromHud());
     el<HTMLButtonElement>("btn-new").addEventListener("click", () => this.newGame());
     this.btnContinue.addEventListener("click", () => this.continueGame());
     el<HTMLButtonElement>("btn-load").addEventListener("click", () => this.openSaves("load"));
@@ -188,7 +202,6 @@ export class Game {
     el<HTMLButtonElement>("btn-brief-title").addEventListener("click", () => this.goTitle());
     el<HTMLButtonElement>("btn-result-title").addEventListener("click", () => this.goTitle());
     el<HTMLButtonElement>("btn-resume").addEventListener("click", () => this.closePause());
-    el<HTMLButtonElement>("btn-pause-bag").addEventListener("click", () => this.openBag());
     el<HTMLButtonElement>("btn-pause-save").addEventListener("click", () => this.openSaves("save"));
     el<HTMLButtonElement>("btn-pause-load").addEventListener("click", () => this.openSaves("load"));
     this.btnMute.addEventListener("click", () => this.toggleMute());
@@ -211,7 +224,6 @@ export class Game {
     this.modalBody.addEventListener("click", (e) => this.onModalClick(e));
     this.titleBuild.textContent = `版本 ${VERSION}　${BUILD_STAMP}`;
     this.syncMuteBtn();
-    void loadSprites();
     audio.setBgm("title");
     this.refreshContinue();
   }
@@ -279,6 +291,45 @@ export class Game {
       this.openSaves("load");
       return;
     }
+    if (hash === "m3" || hash === "play3") {
+      this.missionIndex = 2;
+      this.resetBattle();
+      this.title.hidden = true;
+      if (hash === "m3") {
+        this.phase = "briefing";
+        this.briefing.hidden = false;
+        this.syncUi();
+        return;
+      }
+      this.begin();
+      return;
+    }
+    if (hash === "m4" || hash === "play4") {
+      this.missionIndex = 3;
+      this.resetBattle();
+      this.title.hidden = true;
+      if (hash === "m4") {
+        this.phase = "briefing";
+        this.briefing.hidden = false;
+        this.syncUi();
+        return;
+      }
+      this.begin();
+      return;
+    }
+    if (hash === "m5" || hash === "play5") {
+      this.missionIndex = 4;
+      this.resetBattle();
+      this.title.hidden = true;
+      if (hash === "m5") {
+        this.phase = "briefing";
+        this.briefing.hidden = false;
+        this.syncUi();
+        return;
+      }
+      this.begin();
+      return;
+    }
     if (hash === "m2" || hash === "play2" || hash === "inspect" || hash === "play2rot") {
       this.missionIndex = 1;
       this.resetBattle();
@@ -338,9 +389,14 @@ export class Game {
   }
 
   private inspectPos(): Vec2 | null {
-    if (!this.inspect) return null;
-    if (this.inspect.kind === "unit") return { x: this.inspect.unit.x, y: this.inspect.unit.y };
-    return { x: this.inspect.tile.x, y: this.inspect.tile.y };
+    const ins = this.inspect;
+    if (!ins) return null;
+    if (ins.kind === "unit") return { x: ins.unit.x, y: ins.unit.y };
+    if (ins.kind === "object") {
+      const o = this.map.objects.find((x) => x.id === ins.id);
+      return o ? { x: o.x, y: o.y } : null;
+    }
+    return { x: ins.tile.x, y: ins.tile.y };
   }
 
   private fillBriefing(): void {
@@ -496,8 +552,12 @@ export class Game {
       this.areaTiles = new Set();
       this.areaKind = null;
     } else {
-      this.actionTiles = attackableFrom(u, this.map, this.units, 2);
-      this.areaTiles = attackArea(u.x, u.y, this.map);
+      this.actionTiles = attackableFrom(u, this.map, this.units);
+      for (const o of this.map.objects) {
+        if (o.gone || o.kind !== "destructible") continue;
+        if (inAttackRange(u, u.x, u.y, o.x, o.y, this.map)) this.actionTiles.add(key(o.x, o.y));
+      }
+      this.areaTiles = attackArea(u, this.map);
       this.areaKind = "attack";
     }
   }
@@ -542,13 +602,17 @@ export class Game {
     this.origin = { x: u.x, y: u.y };
     this.originDir = u.dir;
     const path = reconstructPath(this.field, dest);
+    u.anim = "walk";
+    u.animStart = performance.now();
     for (let i = 1; i < path.length; i++) {
       u.dir = dirFromTo(path[i - 1], path[i]);
       u.x = path[i].x;
       u.y = path[i].y;
       await this.waitMs(90);
     }
+    u.anim = "idle";
     u.movedThisTurn = true;
+    this.tryPickup(u);
     this.busy = false;
     if (u.actedThisTurn) {
       await this.finishUnit();
@@ -603,6 +667,7 @@ export class Game {
 
     const u = this.unitAt(tile.x, tile.y);
     const sel = this.selected;
+    const obj = this.map.objAt(tile.x, tile.y);
 
     if (sel && !sel.actedThisTurn && u && this.actionTiles.has(key(u.x, u.y))) {
       this.forecast = makeAttackForecast(sel, u, this.map);
@@ -611,6 +676,37 @@ export class Game {
       this.inspect = null;
       this.syncUi();
       return;
+    }
+
+    if (sel && !sel.actedThisTurn && obj && !obj.gone && obj.kind === "destructible" && this.actionTiles.has(key(obj.x, obj.y))) {
+      this.forecast = {
+        kind: "object",
+        actor: sel,
+        target: sel,
+        label: `${sel.name} → ${obj.label}`,
+        detail: obj.type === "barrel" ? `破壞油桶　鄰格受到 ${BARREL_BLAST} 傷害` : "破壞此物",
+        dmg: Math.max(1, sel.atk + (sel.atkBuff || 0)),
+        heal: 0,
+        skip: false,
+        face: "front",
+        objectId: obj.id,
+      };
+      this.phase = "forecast";
+      this.log = this.forecast.detail;
+      this.inspect = null;
+      this.syncUi();
+      return;
+    }
+
+    if (sel && obj && !obj.gone && (Math.abs(sel.x - obj.x) + Math.abs(sel.y - obj.y) <= 1)) {
+      if (obj.kind === "pickup") {
+        this.tryPickupAt(sel, obj);
+        return;
+      }
+      if (obj.kind === "trigger" && !obj.used && !sel.actedThisTurn) {
+        void this.useTrigger(sel, obj);
+        return;
+      }
     }
 
     if (sel && !sel.movedThisTurn && this.moveTiles.has(key(tile.x, tile.y)) && (!u || u.id === sel.id)) {
@@ -631,18 +727,26 @@ export class Game {
     }
 
     if (u) this.inspectUnit(u);
+    else if (obj && !obj.gone) this.inspectObject(obj.id);
     else this.inspectTile(this.map.tile(tile.x, tile.y)!);
   }
 
   private inspectUnit(u: Unit): void {
     this.inspect = { kind: "unit", unit: u };
-    this.log = `${u.name}　${TEAM_LABEL[u.team]}`;
+    this.log = `${u.name}　${STANCE_LABEL[stanceOf(u)]}`;
     this.syncUi();
   }
 
   private inspectTile(t: Tile): void {
     this.inspect = { kind: "tile", tile: t };
     this.log = TERRAIN_LABEL[t.terrain];
+    this.syncUi();
+  }
+
+  private inspectObject(id: string): void {
+    this.inspect = { kind: "object", id };
+    const o = this.map.objects.find((x) => x.id === id);
+    this.log = o ? o.label : "";
     this.syncUi();
   }
 
@@ -763,12 +867,53 @@ export class Game {
     const f = this.forecast;
     this.busy = true;
     const actor = f.actor;
+    if (f.kind === "object" && f.objectId) {
+      const obj = this.map.objects.find((o) => o.id === f.objectId);
+      if (!obj || obj.gone) {
+        this.busy = false;
+        this.showCommand(actor);
+        return;
+      }
+      actor.dir = dirFromTo(actor, obj);
+      actor.anim = "attack";
+      actor.animStart = performance.now();
+      actor.lunge = 1;
+      audio.play("attack");
+      await this.waitMs(ATTACK_MS);
+      obj.hp = Math.max(0, obj.hp - f.dmg);
+      audio.play("hit");
+      this.spawnFloat(actor, `${f.dmg}`, "#ffd0d8");
+      this.log = `${actor.name} 攻擊 ${obj.label}`;
+      if (actor.atkBuff) actor.atkBuff = 0;
+      if (obj.hp <= 0) {
+        obj.gone = true;
+        this.log = `${obj.label} 被破壞。`;
+        if (obj.type === "barrel") this.blastBarrel(obj.x, obj.y);
+      }
+      actor.actedThisTurn = true;
+      actor.lunge = 0;
+      actor.anim = "idle";
+      this.busy = false;
+      if (this.checkEnd()) return;
+      if (actor.movedThisTurn) {
+        await this.finishUnit();
+        return;
+      }
+      this.forecast = null;
+      this.showCommand(actor);
+      this.autosave();
+      return;
+    }
     const target = f.target;
+    if (target.stance === "neutral" && !f.heal) provoke(target);
     actor.dir = dirFromTo(actor, target);
+    const magic = f.kind === "skill" && (actor.skillKind === "spark" || actor.skillKind === "heal" || actor.skillKind === "halt");
+    actor.anim = magic ? "cast" : "attack";
+    actor.animStart = performance.now();
     actor.lunge = 1;
     if (f.heal) audio.play("heal");
     else audio.play(f.kind === "skill" ? "skill" : "attack");
-    await this.waitMs(140);
+    await this.waitMs(magic ? CAST_MS : ATTACK_MS);
     if (f.heal) {
       target.hp = Math.min(target.maxHp, target.hp + f.heal);
       this.spawnFloat(target, `+${f.heal}`, "#7dffb3");
@@ -792,7 +937,8 @@ export class Game {
     if (f.kind === "skill") actor.skillUsed = true;
     actor.actedThisTurn = true;
     actor.lunge = 0;
-    await this.waitMs(280);
+    actor.anim = "idle";
+    await this.waitMs(160);
     this.busy = false;
     if (this.checkEnd()) return;
     if (actor.movedThisTurn) {
@@ -833,9 +979,9 @@ export class Game {
 
   private async runEnemy(): Promise<void> {
     this.busy = true;
-    const enemies = this.units.filter((u) => u.team === "enemy" && !u.dead);
+    const actors = this.units.filter((u) => !u.dead && !isPlayerControlled(u));
     const protectId = this.mission.protectId;
-    for (const e of enemies) {
+    for (const e of actors) {
       if (this.phase === "victory" || this.phase === "defeat") break;
       if (e.skipNext) {
         e.skipNext = false;
@@ -846,44 +992,65 @@ export class Game {
         continue;
       }
       const plan = planEnemy(e, this.map, this.units, protectId, this.intel);
+      if (plan.path.length > 1) {
+        e.anim = "walk";
+        e.animStart = performance.now();
+      }
       for (let i = 1; i < plan.path.length; i++) {
         e.dir = dirFromTo(plan.path[i - 1], plan.path[i]);
         e.x = plan.path[i].x;
         e.y = plan.path[i].y;
         await this.waitMs(85);
       }
+      e.anim = "idle";
+      this.tryPickup(e);
       if (plan.target && !plan.target.dead) {
         e.dir = dirFromTo(e, plan.target);
+        const f = plan.useSkill && !e.skillUsed
+          ? makeSkillForecast(e, plan.target, this.map)
+          : makeAttackForecast(e, plan.target, this.map);
+        const magic = f.kind === "skill" && (e.skillKind === "spark" || e.skillKind === "heal" || e.skillKind === "halt");
+        e.anim = magic ? "cast" : "attack";
+        e.animStart = performance.now();
         e.lunge = 1;
-        const f = makeAttackForecast(e, plan.target, this.map);
-        audio.play("attack");
-        plan.target.hp = Math.max(0, plan.target.hp - f.dmg);
-        audio.play("hit");
-        this.spawnFloat(plan.target, `${f.dmg}`, "#ff4d6d");
-        this.log = `${e.name} 對 ${plan.target.name} 造成 ${f.dmg} 傷害`;
-        if (plan.target.hp <= 0) {
-          plan.target.dead = true;
-          this.log = `${plan.target.name} 倒下。`;
+        audio.play(f.kind === "skill" ? "skill" : "attack");
+        await this.waitMs(magic ? CAST_MS : ATTACK_MS);
+        if (f.heal) {
+          plan.target.hp = Math.min(plan.target.maxHp, plan.target.hp + f.heal);
+          this.spawnFloat(plan.target, `+${f.heal}`, "#7dffb3");
+          this.log = `${e.name} 為 ${plan.target.name} 回復 ${f.heal}`;
+        } else {
+          if (plan.target.stance === "neutral") provoke(plan.target);
+          plan.target.hp = Math.max(0, plan.target.hp - f.dmg);
+          audio.play("hit");
+          this.spawnFloat(plan.target, `${f.dmg}`, "#ff4d6d");
+          this.log = `${e.name} 對 ${plan.target.name} 造成 ${f.dmg} 傷害`;
+          if (f.skip) plan.target.skipNext = true;
+          if (plan.target.hp <= 0) {
+            plan.target.dead = true;
+            this.log = `${plan.target.name} 倒下。`;
+            this.tryEnemyDrop(plan.target);
+          }
         }
-        await this.waitMs(160);
+        if (f.kind === "skill") e.skillUsed = true;
+        await this.waitMs(120);
         e.lunge = 0;
-        await this.waitMs(220);
+        e.anim = "idle";
         if (this.checkEnd()) {
           this.busy = false;
           return;
         }
       } else {
-        await this.waitMs(120);
+        await this.waitMs(80);
       }
       e.acted = true;
     }
     for (const u of this.units) {
       u.acted = false;
-      if (u.team === "player" && !u.npc) {
-        u.skillUsed = false;
-        u.movedThisTurn = false;
-        u.actedThisTurn = false;
-      }
+      u.skillUsed = false;
+      u.movedThisTurn = false;
+      u.actedThisTurn = false;
+      u.anim = "idle";
     }
     this.turn += 1;
     this.phase = "select";
@@ -967,6 +1134,77 @@ export class Game {
 
   private unitAt(x: number, y: number): Unit | undefined {
     return this.units.find((u) => !u.dead && u.x === x && u.y === y);
+  }
+
+  private tryPickup(u: Unit): void {
+    const o = this.map.objAt(u.x, u.y);
+    if (!o || o.gone || o.kind !== "pickup") return;
+    this.collectPickup(u, o);
+  }
+
+  private tryPickupAt(u: Unit, o: { id: string }): void {
+    const obj = this.map.objects.find((x) => x.id === o.id);
+    if (!obj || obj.gone || obj.kind !== "pickup") return;
+    this.collectPickup(u, obj);
+  }
+
+  private collectPickup(u: Unit, o: import("./objects").BoardObj): void {
+    const item = o.item ?? "bandage";
+    if (addItem(this.inventory, item, 1) > 0) {
+      this.spawnFloat(u, `取得 ${ITEMS[item].name}`, "#ffe08a");
+      this.log = `${u.name} 取得 ${ITEMS[item].name}`;
+    } else {
+      this.log = "背包已滿。";
+    }
+    o.gone = true;
+    this.syncUi();
+    this.autosave();
+  }
+
+  private async useTrigger(u: Unit, obj: import("./objects").BoardObj): Promise<void> {
+    if (this.busy || u.actedThisTurn || obj.used) return;
+    this.busy = true;
+    u.anim = "cast";
+    u.animStart = performance.now();
+    audio.play("skill");
+    await this.waitMs(CAST_MS);
+    obj.used = true;
+    if (obj.type === "van") obj.gone = true;
+    for (const [x, y] of obj.unblock) this.map.unblock(x, y);
+    if (obj.healAdj) {
+      for (const a of this.units) {
+        if (a.dead) continue;
+        if (Math.abs(a.x - obj.x) + Math.abs(a.y - obj.y) > 1) continue;
+        if (a.stance !== "friendly" && a.team !== "player") continue;
+        a.hp = Math.min(a.maxHp, a.hp + obj.healAdj);
+        this.spawnFloat(a, `+${obj.healAdj}`, "#7dffb3");
+      }
+    }
+    this.log = obj.type === "van" ? "貨車門打開了。" : "開關啟動。";
+    u.actedThisTurn = true;
+    u.anim = "idle";
+    this.busy = false;
+    if (u.movedThisTurn) {
+      await this.finishUnit();
+      return;
+    }
+    this.showCommand(u);
+    this.autosave();
+  }
+
+  private blastBarrel(x: number, y: number): void {
+    audio.play("hit");
+    for (const u of this.units) {
+      if (u.dead) continue;
+      if (Math.abs(u.x - x) + Math.abs(u.y - y) !== 1) continue;
+      u.hp = Math.max(0, u.hp - BARREL_BLAST);
+      this.spawnFloat(u, `${BARREL_BLAST}`, "#ff9a3c");
+      if (u.hp <= 0) {
+        u.dead = true;
+        this.log = `${u.name} 被爆炸波及。`;
+        this.tryEnemyDrop(u);
+      }
+    }
   }
 
   private spawnFloat(u: Unit, text: string, color: string): void {
@@ -1085,6 +1323,18 @@ export class Game {
 
   private playable(): boolean {
     return this.phase === "select" || this.phase === "skillAim" || this.phase === "forecast" || this.phase === "itemAim";
+  }
+
+  private openBagFromHud(): void {
+    if (
+      this.phase === "title" ||
+      this.phase === "briefing" ||
+      this.phase === "victory" ||
+      this.phase === "defeat"
+    ) {
+      return;
+    }
+    this.openBag();
   }
 
   private openBag(): void {
@@ -1337,6 +1587,7 @@ export class Game {
       originDir: this.originDir,
       m1DropGiven: this.m1DropGiven,
       missionStartInventory: cloneInventory(this.missionStartInventory),
+      objects: this.map.objects.map((o) => ({ id: o.id, hp: o.hp, gone: o.gone, used: o.used })),
     };
   }
 
@@ -1357,6 +1608,14 @@ export class Game {
       movedThisTurn: u.movedThisTurn,
       actedThisTurn: u.actedThisTurn,
       atkBuff: u.atkBuff,
+      team: u.team,
+      stance: u.stance,
+      behaviour: u.behaviour,
+      archetype: u.archetype,
+      gender: u.gender,
+      skillKind: u.skillKind,
+      rangeMin: u.rangeMin,
+      rangeMax: u.rangeMax,
     };
   }
 
@@ -1372,6 +1631,19 @@ export class Game {
     this.setSeg("seg-intel", s.intel);
     this.setSeg("seg-power", s.power);
     this.map = new GameMap(this.mission.map);
+    if (s.objects) {
+      for (const packed of s.objects) {
+        const o = this.map.objects.find((x) => x.id === packed.id);
+        if (!o) continue;
+        o.hp = packed.hp;
+        o.gone = packed.gone;
+        o.used = packed.used;
+        if (o.used) {
+          for (const [x, y] of o.unblock) this.map.unblock(x, y);
+          if (o.type === "van") o.gone = true;
+        }
+      }
+    }
     const templates = [...makePlayerUnits(this.mission.starts), ...this.mission.makeOthers()];
     const byId = new Map(templates.map((u) => [u.id, u]));
     this.units = [];
@@ -1449,12 +1721,12 @@ export class Game {
   private paintUnitChip(u: Unit, inspecting: boolean): void {
     this.chip.hidden = false;
     this.chipHp.hidden = false;
-    const team = u.npc ? "保護" : TEAM_LABEL[u.team];
+    const team = `${STANCE_LABEL[stanceOf(u)]}${u.npc ? "　保護" : ""}`;
     this.chipName.textContent = `${u.name}　${u.title}`;
     const buff = u.atkBuff ? `　攻擊+${u.atkBuff}` : "";
     this.chipMeta.textContent = `${team}　${ROLE_LABEL[u.role]}　生命 ${u.hp}/${u.maxHp}　攻擊 ${u.atk}　防禦 ${u.def}　移動 ${u.mov}　跳躍 ${u.jmp}${buff}`;
     this.chipHpFill.style.width = `${(100 * u.hp) / u.maxHp}%`;
-    this.chipMark.style.background = u.npc ? "#ffc857" : u.team === "player" ? "#3ef0d0" : "#ff4d6d";
+    this.chipMark.style.background = factionColor(u);
     if (u.skillName) {
       this.chipExtra.hidden = false;
       this.chipExtra.textContent = `${u.skillName}　${u.skillHint}`;
@@ -1463,6 +1735,31 @@ export class Game {
       this.chipExtra.textContent = inspecting ? "無技能" : "";
       if (!inspecting) this.chipExtra.hidden = true;
     }
+  }
+
+  private paintObjectChip(id: string): void {
+    const o = this.map.objects.find((x) => x.id === id);
+    this.chip.hidden = false;
+    if (!o) {
+      this.chip.hidden = true;
+      return;
+    }
+    this.chipHp.hidden = o.kind !== "destructible";
+    this.chipName.textContent = o.label;
+    const kindText =
+      o.kind === "pickup" ? "拾取" : o.kind === "trigger" ? "啟動" : o.kind === "destructible" ? "可破壞" : "可站上";
+    this.chipMeta.textContent = `${kindText}　${o.used ? "已使用" : "未使用"}`;
+    if (o.kind === "destructible") this.chipHpFill.style.width = `${(100 * o.hp) / o.maxHp}%`;
+    this.chipExtra.hidden = false;
+    this.chipExtra.textContent =
+      o.kind === "pickup"
+        ? "靠近或走到此格可放入背包。"
+        : o.kind === "trigger"
+          ? "相鄰時可啟動。消耗行動。"
+          : o.kind === "destructible"
+            ? "攻擊可破壞。油桶爆炸會波及鄰格。"
+            : "走到此格可站上，高度較高。";
+    this.chipMark.style.background = o.kind === "destructible" ? "#ff4d6d" : "#ffc857";
   }
 
   private paintTileChip(t: Tile): void {
@@ -1497,6 +1794,7 @@ export class Game {
 
     if (this.inspect && play) {
       if (this.inspect.kind === "unit") this.paintUnitChip(this.inspect.unit, true);
+      else if (this.inspect.kind === "object") this.paintObjectChip(this.inspect.id);
       else this.paintTileChip(this.inspect.tile);
     } else if (u && play) {
       this.paintUnitChip(u, false);
@@ -1540,6 +1838,7 @@ export class Game {
     this.btnEnd.hidden = !leftover || hideChrome;
     this.btnRotate.hidden = hideChrome;
     this.btnPause.hidden = hidePause;
+    this.btnBag.hidden = hidePause;
     this.camHint.hidden = hideChrome;
     const fine = window.matchMedia("(pointer: fine)").matches;
     this.yawSlider.hidden = hideChrome || !fine;

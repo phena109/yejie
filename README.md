@@ -36,7 +36,13 @@ Win: defeat Beckett. Rowan Hale must still be alive.
 
 Lose: all three player units down, or Rowan Hale dies.
 
-View: orthogonal ~45° isometric. Diamond tiles. Height as stacked blocks (street / stairs / roof). Canvas 2.5D only. Two-finger twist rotates yaw freely (any degree), inverted so the map sticks to the fingers. Two-finger up/down tilts pitch, locked 15°–75° (15 side-on, 75 top-down; default ~30° isometric). Pinch zooms. One-finger drag pans. Twist, pinch, and pitch can happen together. 旋轉 still snaps 90°. Desktop debug: right-drag (x yaw, y pitch) or the yaw/pitch sliders. Hit-testing follows the current yaw and pitch.
+Mission 03: warehouse / docks. Assembly cleaning witnesses. Win: defeat Vance. Sam Ortiz must live. Dock worker Gina Pell flees (neutral).
+
+Mission 04: gang-replacement street. Leftover local crew (neutral; fight Assembly unless you attack them) vs Assembly vs you. Win: defeat Inez. Local crew does not have to be wiped.
+
+Mission 05: Assembly goes for Port Authority Director Marla Keene. Magician and clawed unit (wolverine archetype, not Marvel IP) appear; deniable as fireworks / animals. Win: Holt down and Keene alive.
+
+View: orthogonal ~45° isometric. Diamond tiles. Height as stacked blocks (street / stairs / roof). Canvas hybrid: terrain stays 2D isometric; units are low-poly 3D rigs projected through the same camera (idle / walk / attack / cast). Two-finger twist rotates yaw freely (any degree), inverted so the map sticks to the fingers. Two-finger up/down tilts pitch, locked 15°–75° (15 side-on, 75 top-down; default ~30° isometric). Pinch zooms. One-finger drag pans. Twist, pinch, and pitch can happen together. 旋轉 still snaps 90°. Desktop debug: right-drag (x yaw, y pitch) or the yaw/pitch sliders. Hit-testing follows the current yaw and pitch.
 
 Inspect: tap terrain or a unit you did not pick as actor. Terrain shows name, height, walkable/blocked, street/stairs/roof, and any prop (stall, A/C, crate, lamp). Units show name, role, HP, atk/def/move/jump, skill name plus one line, and team. Cancel or tap empty UI dismisses inspect. Selecting your own unit for orders still works.
 
@@ -76,7 +82,7 @@ Multipliers on enemy HP, ATK, and DEF, applied when spawning a mission.
 
 A bag kept between missions. Start: 繃帶 ×2 (回復 14 生命), 提神 ×1 (下次攻擊 +5). No shop.
 
-Open 背包 from the start screen (view) and during the player turn (use). Using an item: pick the item, pick a target (self or ally). Consumes one. Counts as that acting unit's Act; they can still Move after, per FFT rules.
+Open 背包 from the start screen (view) and from the fight HUD 背包 button. Pause no longer contains 背包. Opening the bag does not skip leftover move. Using an item: pick the item, pick a target (self or ally). Consumes one. Counts as that acting unit's Act; they can still Move after, per FFT rules.
 
 If the player loses and 再戰 / retries that fight, inventory reloads to the snapshot taken when the briefing was confirmed, not the emptied bag. HP of the three still restores as now.
 
@@ -102,20 +108,22 @@ Autosave writes after briefing, battle start, unit finish, enemy phase, and win 
 
 ## What is in the slice
 
-- Two maps, each 10 by 12. Mission 01: street, stairs, rooftop, stall chokepoints and side roofs. Mission 02: alley, loading bay, fire-escape height, crate pocket for Hale.
-- Full flow: start screen, settings, briefing, fight, victory or defeat, 下一場 into mission 02, restart. 回到標題 from briefing, result, and pause (confirm if mid-fight; saves stay).
-- Pause menu on the fight UI: 繼續, 背包, 存檔, 讀檔, 靜音, 回到標題. Bag/save from pause do not skip a unit's turn. Pause freezes the enemy phase.
+- Five maps, each 10 by 12. M1 roof, M2 alley, M3 warehouse, M4 street, M5 plaza.
+- Full flow: start screen, settings, briefing, fight, victory or defeat, 下一場 through mission 05, restart. 回到標題 from briefing, result, and pause (confirm if mid-fight; saves stay).
+- Pause menu on the fight UI: 繼續, 存檔, 讀檔, 靜音, 回到標題. Fight HUD 背包. Bag/save do not skip leftover move. Pause freezes the enemy phase.
 - Select unit, show move and attack ranges together when both remain. Act in place, move after acting, or skip one. After Act with Move left, deselect and return later. Wait ends the unit. Both used ends the unit. 結束回合 ends the player phase. Items consume Act. Done units show E and fade.
 - Tap a unit or tile to inspect. Tap an in-range enemy to preview damage, Confirm to strike.
 - Camera starts on the player team. Drag to pan. Pinch to zoom. Two-finger twist for free yaw (map follows fingers). Two-finger vertical tilts pitch 15–75.
-- Billboard unit sprites (Mara, Dana, Priya, Assembly, Hale) anchored at the feet. Crosby/Beckett reuse the Assembly sprite with a gold mark.
+- Low-poly 3D units (capsules/boxes) with facing yaw on the tile, faction colour rings, and a ground chevron (cool body, warm tip). Distinct silhouettes: Mara, Dana, Priya, Hale, Crosby, Beckett, delinquent, magician, wolverine, boxer, gunner, worker, official.
+- Third parties: friendly / hostile / neutral; combat, flee, idle, indiscriminate. Neutral becomes hostile if attacked.
+- Grid objects: pickup (kit), trigger (switch / van door), destructible (barrel blast), stand-on (crate / pallet).
 - Bundled Web Audio SFX and BGM (title/briefing, battle). First tap unlocks audio. Mute is remembered.
 - Title 重新載入 clears caches, updates the service worker, and reloads (iOS home screen and Android). Version stamp on the title screen.
 - Original canvas art for terrain plus original sprites. No copyrighted assets.
 
 ## What was cut on purpose
 
-- Extra classes, extra maps beyond the two, jobs, loot shop, gacha, accounts.
+- Extra classes, jobs, loot shop, gacha, accounts. Three.js not used (canvas-projected rigs keep yaw/pitch aligned).
 - No keyboard-first UI. Wheel zoom and right-drag rotate are desktop debug extras only.
 
 See package.json scripts: install, dev, build, preview.

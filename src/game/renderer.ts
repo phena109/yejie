@@ -1,7 +1,8 @@
 import type { GameMap, MapTheme } from "./map";
-import { spriteFacesLeft, spriteOf } from "./sprites";
-import type { FloatText, Phase, Tile, Unit, Vec2 } from "./types";
-import { DIRS, key, nextYaw, yawDir, yawPoint } from "./types";
+import type { BoardObj } from "./objects";
+import { CHAR_H, drawRig, localToGrid, type ProjectFn } from "./rig";
+import type { Dir, FloatText, Phase, Tile, Unit, Vec2 } from "./types";
+import { DIRS, factionColor, key, nextYaw, yawDir, yawPoint } from "./types";
 
 /** Diamond width at 45° yaw. Height and block scale with pitch. */
 export const TILE_W = 64;
@@ -324,8 +325,15 @@ export class Renderer {
       byTile.set(key(u.x, u.y), u);
     }
 
+    const objAt = new Map<string, BoardObj>();
+    for (const o of map.objects) {
+      if (!o.gone) objAt.set(key(o.x, o.y), o);
+    }
+
     for (const c of this.cellsInDrawOrder(map)) {
       this.drawTile(map.tiles[c.y][c.x], map, overlays);
+      const o = objAt.get(key(c.x, c.y));
+      if (o) this.drawBoardObj(o, map);
       const u = byTile.get(key(c.x, c.y));
       if (u) this.drawUnit(u, map, overlays);
     }
@@ -337,7 +345,7 @@ export class Renderer {
   private drawBackdrop(theme: MapTheme): void {
     const ctx = this.ctx;
     const g = ctx.createLinearGradient(0, 0, 0, this.h);
-    if (theme === "alley") {
+    if (theme === "alley" || theme === "warehouse" || theme === "street") {
       g.addColorStop(0, "#0c0d12");
       g.addColorStop(0.5, "#0a090c");
       g.addColorStop(1, "#140c08");
@@ -359,9 +367,15 @@ export class Renderer {
     ctx.restore();
   }
 
+  private themeGroup(theme: MapTheme): "alley" | "roof" {
+    if (theme === "warehouse" || theme === "street" || theme === "alley") return "alley";
+    return "roof";
+  }
+
   private tilePaint(t: Tile, theme: MapTheme, checker: boolean): { top: string; left: string; right: string; rim: string; seam: string } {
     const blocked = t.blocked;
-    if (theme === "alley") {
+    const group = this.themeGroup(theme);
+    if (group === "alley") {
       if (t.terrain === "stairs") {
         return {
           top: checker ? "#6e6254" : "#5e5248",
@@ -837,89 +851,172 @@ export class Renderer {
     }
   }
 
+  private projectFor(u: Unit, map: GameMap): ProjectFn {
+    const h = map.heightAt(u.x, u.y);
+    return (lx: number, ly: number, lz: number) => {
+      const g = localToGrid(lx, ly, u.dir);
+      const screen = this.worldToScreen(u.x + g.x, u.y + g.y, h + lz * CHAR_H);
+      const yp = yawPoint(u.x + g.x, u.y + g.y, this.yaw, map.w, map.h);
+      return { x: screen.x, y: screen.y, d: yp.x + yp.y - lz * CHAR_H * 0.45 };
+    };
+  }
+
+  private projectAt(gx: number, gy: number, h: number, dir: Dir, map: GameMap): ProjectFn {
+    return (lx: number, ly: number, lz: number) => {
+      const g = localToGrid(lx, ly, dir);
+      const screen = this.worldToScreen(gx + g.x, gy + g.y, h + lz * CHAR_H);
+      const yp = yawPoint(gx + g.x, gy + g.y, this.yaw, map.w, map.h);
+      return { x: screen.x, y: screen.y, d: yp.x + yp.y - lz };
+    };
+  }
+
+  private drawBoardObj(o: BoardObj, map: GameMap): void {
+    const ctx = this.ctx;
+    const h = map.tiles[o.y][o.x].h;
+    const p = this.worldToScreen(o.x, o.y, h);
+    const z = this.cam.zoom;
+    const { cx, cy, hw, hh } = this.topMetrics(o.x, o.y, h);
+    void p;
+    if (o.type === "barrel") {
+      ctx.fillStyle = "#7a2a22";
+      ctx.beginPath();
+      ctx.ellipse(cx, cy + 2 * z, hw * 0.38, hh * 0.32, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = "#c44a32";
+      ctx.fillRect(cx - 7 * z, cy - 16 * z, 14 * z, 18 * z);
+      ctx.fillStyle = "#e8c45a";
+      ctx.fillRect(cx - 7 * z, cy - 8 * z, 14 * z, 2.2 * z);
+      ctx.fillStyle = "#2a1010";
+      ctx.beginPath();
+      ctx.ellipse(cx, cy - 16 * z, 7 * z, 3.2 * z, 0, 0, Math.PI * 2);
+      ctx.fill();
+      const ratio = o.hp / Math.max(1, o.maxHp);
+      ctx.fillStyle = "#111018";
+      ctx.fillRect(cx - 10 * z, cy - 22 * z, 20 * z, 3 * z);
+      ctx.fillStyle = "#ff4d6d";
+      ctx.fillRect(cx - 10 * z, cy - 22 * z, 20 * z * ratio, 3 * z);
+      return;
+    }
+    if (o.type === "kit") {
+      ctx.fillStyle = "#f2f4f0";
+      ctx.fillRect(cx - 8 * z, cy - 8 * z, 16 * z, 12 * z);
+      ctx.fillStyle = "#d04040";
+      ctx.fillRect(cx - 2 * z, cy - 6 * z, 4 * z, 8 * z);
+      ctx.fillRect(cx - 6 * z, cy - 3 * z, 12 * z, 3 * z);
+      ctx.strokeStyle = "#3a3a40";
+      ctx.strokeRect(cx - 8 * z, cy - 8 * z, 16 * z, 12 * z);
+      return;
+    }
+    if (o.type === "switch") {
+      ctx.fillStyle = o.used ? "#3a5a48" : "#3ef0d0";
+      this.diamondPath(cx, cy, hw * 0.35, hh * 0.35);
+      ctx.fill();
+      ctx.strokeStyle = "#0a1816";
+      ctx.stroke();
+      ctx.fillStyle = o.used ? "#8aa" : "#fff";
+      ctx.font = `bold ${Math.max(8, 9 * z)}px sans-serif`;
+      ctx.textAlign = "center";
+      ctx.fillText(o.used ? "開" : "掣", cx, cy + 3 * z);
+      return;
+    }
+    if (o.type === "van") {
+      ctx.fillStyle = o.used ? "#3a4850" : "#2a3540";
+      ctx.fillRect(cx - 14 * z, cy - 18 * z, 28 * z, 22 * z);
+      ctx.fillStyle = "#1a2228";
+      ctx.fillRect(cx - 10 * z, cy - 14 * z, 12 * z, 8 * z);
+      ctx.fillStyle = o.used ? "#7dffb3" : "#ffc857";
+      ctx.fillRect(cx + 4 * z, cy - 6 * z, 8 * z, 10 * z);
+      ctx.fillStyle = "#e8eef2";
+      ctx.font = `${Math.max(8, 9 * z)}px sans-serif`;
+      ctx.textAlign = "center";
+      ctx.fillText(o.used ? "開" : "門", cx, cy + 16 * z);
+      return;
+    }
+    // crate / pallet platform
+    const ph = o.type === "pallet" ? 8 * z : 12 * z;
+    ctx.fillStyle = o.type === "pallet" ? "#6a5030" : "#8a5a32";
+    ctx.beginPath();
+    ctx.moveTo(cx - hw * 0.46, cy);
+    ctx.lineTo(cx, cy + hh * 0.46);
+    ctx.lineTo(cx, cy + hh * 0.46 + ph);
+    ctx.lineTo(cx - hw * 0.46, cy + ph);
+    ctx.closePath();
+    ctx.fill();
+    ctx.fillStyle = o.type === "pallet" ? "#7a6038" : "#a06a3c";
+    ctx.beginPath();
+    ctx.moveTo(cx + hw * 0.46, cy);
+    ctx.lineTo(cx, cy + hh * 0.46);
+    ctx.lineTo(cx, cy + hh * 0.46 + ph);
+    ctx.lineTo(cx + hw * 0.46, cy + ph);
+    ctx.closePath();
+    ctx.fill();
+    this.diamondPath(cx, cy - 2 * z, hw * 0.46, hh * 0.46);
+    ctx.fillStyle = o.type === "pallet" ? "#c4a060" : "#c48448";
+    ctx.fill();
+    ctx.strokeStyle = "rgba(40,22,10,0.55)";
+    ctx.stroke();
+  }
+
   private drawUnit(u: Unit, map: GameMap, overlays: DrawOverlays): void {
     const ctx = this.ctx;
     const h = map.heightAt(u.x, u.y);
     const p = this.worldToScreen(u.x, u.y, h);
     const z = this.cam.zoom;
     const elite = u.role === "elite";
-    const npc = u.npc || u.role === "civilian";
-    const scale = (elite ? 1.18 : npc ? 1.05 : 1) * z;
-    const friend = u.team === "player";
-    const body = npc ? "#2a2818" : friend ? "#12343a" : elite ? "#2a1020" : "#3a1418";
-    const accent = npc ? "#ffc857" : friend ? "#3ef0d0" : elite ? "#ffc857" : "#ff4d6d";
+    const scale = (elite ? 1.12 : 1) * z;
+    const accent = factionColor(u);
     const face = yawDir(DIRS[u.dir].x, DIRS[u.dir].y, this.yaw);
-    const fx = face.x;
-    const fy = face.y;
-    const dx = (fx - fy) * 5 * z * (u.lunge || 0);
-    const dy = (fx + fy) * 2.5 * z * (u.lunge || 0);
-    const plant = 2 * z;
+    const dx = (face.x - face.y) * 6 * z * (u.lunge || 0);
+    const dy = (face.x + face.y) * 3 * z * (u.lunge || 0);
     const x = p.x + dx;
-    const feetY = p.y + dy + plant;
-
+    const feetY = p.y + dy + 2 * z;
     const done = u.acted;
     ctx.save();
     if (done) ctx.globalAlpha *= 0.45;
 
     ctx.fillStyle = "rgba(0,0,0,0.4)";
     ctx.beginPath();
-    ctx.ellipse(p.x + dx, feetY + 1 * z, 11 * scale, 5.2 * scale, 0, 0, Math.PI * 2);
+    ctx.ellipse(x, feetY + 1 * z, 12 * scale, 5.6 * scale, 0, 0, Math.PI * 2);
     ctx.fill();
 
-    const frame = spriteOf(u);
-    const dh = (elite ? 78 : npc ? 70 : 72) * scale;
-    const dw = frame ? (frame.sw / frame.sh) * dh : 20 * scale;
-    const faceLeft = fx - fy < 0;
-    const flip = faceLeft !== spriteFacesLeft(u);
+    ctx.strokeStyle = accent;
+    ctx.lineWidth = Math.max(2.2, 2.6 * z);
+    ctx.beginPath();
+    ctx.ellipse(x, feetY + 1 * z, 13.5 * scale, 6.4 * scale, 0, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.strokeStyle = "rgba(8,8,12,0.85)";
+    ctx.lineWidth = 1;
+    ctx.stroke();
 
     if (overlays.selected?.id === u.id) {
       ctx.strokeStyle = accent;
-      ctx.lineWidth = 2;
+      ctx.lineWidth = 2.2;
       this.diamondPath(p.x, p.y, 16 * scale, 8 * scale);
       ctx.stroke();
     }
     if (overlays.target?.id === u.id) {
       ctx.strokeStyle = "#ffe08a";
       ctx.lineWidth = 2;
-      ctx.strokeRect(x - dw * 0.55, feetY - dh - 4 * scale, dw * 1.1, dh + 10 * scale);
-    }
-
-    if (frame) {
-      ctx.save();
-      ctx.translate(x, feetY);
-      if (flip) ctx.scale(-1, 1);
-      ctx.drawImage(frame.img, frame.sx, frame.sy, frame.sw, frame.sh, -dw / 2, -dh, dw, dh);
-      ctx.restore();
-    } else {
-      ctx.fillStyle = body;
-      ctx.beginPath();
-      ctx.moveTo(x, feetY);
-      ctx.lineTo(x - 10 * scale, feetY - 10 * scale);
-      ctx.lineTo(x - 8 * scale, feetY - 22 * scale);
-      ctx.lineTo(x + 8 * scale, feetY - 22 * scale);
-      ctx.lineTo(x + 10 * scale, feetY - 10 * scale);
-      ctx.closePath();
-      ctx.fill();
-      ctx.strokeStyle = accent;
-      ctx.lineWidth = 1.4;
+      this.diamondPath(p.x, p.y, 18 * scale, 9 * scale);
       ctx.stroke();
-      ctx.fillStyle = npc ? "#f0e6c8" : friend ? "#d7ece8" : elite ? "#f3e0b0" : "#e8c8c8";
-      ctx.beginPath();
-      ctx.arc(x, feetY - 26 * scale, 6.2 * scale, 0, Math.PI * 2);
-      ctx.fill();
     }
 
-    if (elite) {
-      ctx.fillStyle = "#ffc857";
-      ctx.fillRect(x - 8 * scale, feetY - dh - 14 * scale, 16 * scale, 3 * scale);
-    }
+    const project = this.projectFor(u, map);
+    const shifted: ProjectFn = (lx, ly, lz) => {
+      const q = project(lx, ly, lz);
+      return { x: q.x + dx, y: q.y + dy, d: q.d };
+    };
+    drawRig(ctx, shifted, u, this.time, z);
 
+    this.drawFacingWedge(u, map, x, feetY, z);
+
+    const dh = 64 * scale;
     const bw = 22 * scale;
     const ratio = Math.max(0, u.hp / u.maxHp);
-    const barY = feetY - dh - 8 * scale;
+    const barY = feetY - dh - 4 * scale;
     ctx.fillStyle = "#111018";
     ctx.fillRect(x - bw / 2, barY, bw, 3.5 * scale);
-    ctx.fillStyle = npc ? "#ffc857" : friend ? "#3ef0d0" : "#ff4d6d";
+    ctx.fillStyle = accent;
     ctx.fillRect(x - bw / 2, barY, bw * ratio, 3.5 * scale);
 
     ctx.fillStyle = "#e8eef2";
@@ -929,11 +1026,9 @@ export class Renderer {
 
     ctx.restore();
 
-    this.drawFacing(x, feetY, fx, fy, accent, z);
-
     if (done) {
-      const ex = x + dw * 0.42;
-      const ey = feetY - dh + 6 * scale;
+      const ex = x + 14 * scale;
+      const ey = feetY - dh + 10 * scale;
       const er = 7.2 * scale;
       ctx.fillStyle = "rgba(8, 8, 14, 0.88)";
       ctx.beginPath();
@@ -951,33 +1046,44 @@ export class Renderer {
     }
   }
 
-  private drawFacing(x: number, feetY: number, fx: number, fy: number, accent: string, z: number): void {
+  private drawFacingWedge(u: Unit, map: GameMap, x: number, feetY: number, z: number): void {
     const ctx = this.ctx;
-    let reachX = (fx - fy) * (TILE_W / 2) * z;
-    let reachY = (fx + fy) * (this.tileH() / 2) * z;
-    const len = Math.hypot(reachX, reachY) || 1;
-    const dist = 13 * z;
-    reachX = (reachX / len) * dist;
-    reachY = (reachY / len) * dist;
-    const nx = -reachY / dist;
-    const ny = reachX / dist;
-    const half = 7 * z;
-    const tx = x + reachX;
-    const ty = feetY + reachY + 1.2 * z;
-    const bx = x + reachX * 0.18;
-    const by = feetY + reachY * 0.18 + 1.2 * z;
+    const h = map.heightAt(u.x, u.y);
+    const project = this.projectAt(u.x, u.y, h, u.dir, map);
+    const tip = [
+      project(0, 0.48, 0.035),
+      project(-0.16, 0.16, 0.035),
+      project(0.16, 0.16, 0.035),
+    ];
+    const body = [
+      project(-0.2, 0.14, 0.02),
+      project(0.2, 0.14, 0.02),
+      project(0.24, -0.22, 0.02),
+      project(0, -0.08, 0.02),
+      project(-0.24, -0.22, 0.02),
+    ];
     ctx.beginPath();
-    ctx.moveTo(tx, ty);
-    ctx.lineTo(bx - nx * half, by - ny * half);
-    ctx.lineTo(bx + reachX * 0.12, by + reachY * 0.12);
-    ctx.lineTo(bx + nx * half, by + ny * half);
+    ctx.moveTo(body[0].x, body[0].y);
+    for (let i = 1; i < body.length; i++) ctx.lineTo(body[i].x, body[i].y);
     ctx.closePath();
     ctx.lineJoin = "round";
-    ctx.strokeStyle = "rgba(6, 6, 10, 0.95)";
+    ctx.strokeStyle = "rgba(6,8,14,0.95)";
     ctx.lineWidth = Math.max(2.4, 2.8 * z);
     ctx.stroke();
-    ctx.fillStyle = accent;
+    ctx.fillStyle = "#5a88c8";
     ctx.fill();
+
+    ctx.beginPath();
+    ctx.moveTo(tip[0].x, tip[0].y);
+    ctx.lineTo(tip[1].x, tip[1].y);
+    ctx.lineTo(tip[2].x, tip[2].y);
+    ctx.closePath();
+    ctx.strokeStyle = "rgba(6,8,14,0.95)";
+    ctx.stroke();
+    ctx.fillStyle = "#ff9a3c";
+    ctx.fill();
+    void x;
+    void feetY;
   }
 
   private drawVignette(): void {

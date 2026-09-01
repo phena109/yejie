@@ -1,5 +1,36 @@
-export type Team = "player" | "enemy";
-export type Role = "striker" | "controller" | "support" | "grunt" | "elite" | "civilian";
+export type Team = "player" | "enemy" | "neutral";
+export type Stance = "friendly" | "hostile" | "neutral";
+export type Behaviour = "combat" | "flee" | "idle" | "indiscriminate";
+export type Archetype =
+  | "mara"
+  | "dana"
+  | "priya"
+  | "hale"
+  | "crosby"
+  | "beckett"
+  | "delinquent"
+  | "magician"
+  | "wolverine"
+  | "boxer"
+  | "gunner"
+  | "worker"
+  | "official";
+export type SkillKind = "strike" | "halt" | "heal" | "slash" | "spark" | "pounce" | "hook" | "shot" | "";
+export type AnimClip = "idle" | "walk" | "attack" | "cast";
+export type Gender = "f" | "m";
+export type Role =
+  | "striker"
+  | "controller"
+  | "support"
+  | "grunt"
+  | "elite"
+  | "civilian"
+  | "delinquent"
+  | "magician"
+  | "wolverine"
+  | "boxer"
+  | "gunner"
+  | "worker";
 export type Terrain = "street" | "stairs" | "roof";
 export type Dir = 0 | 1 | 2 | 3;
 export type Prop = "stall" | "ac" | "lamp" | "crate";
@@ -27,6 +58,10 @@ export interface Unit {
   title: string;
   team: Team;
   role: Role;
+  archetype: Archetype;
+  stance: Stance;
+  behaviour: Behaviour;
+  gender: Gender;
   x: number;
   y: number;
   hp: number;
@@ -39,6 +74,7 @@ export interface Unit {
   acted: boolean;
   skillName: string;
   skillHint: string;
+  skillKind: SkillKind;
   skillUsed: boolean;
   skipNext: boolean;
   dead: boolean;
@@ -47,6 +83,10 @@ export interface Unit {
   actedThisTurn: boolean;
   npc: boolean;
   atkBuff: number;
+  rangeMin: number;
+  rangeMax: number;
+  anim: AnimClip;
+  animStart: number;
 }
 
 export interface Tile {
@@ -59,7 +99,7 @@ export interface Tile {
 }
 
 export interface Forecast {
-  kind: "attack" | "skill";
+  kind: "attack" | "skill" | "object";
   actor: Unit;
   target: Unit;
   label: string;
@@ -68,6 +108,7 @@ export interface Forecast {
   heal: number;
   skip: boolean;
   face: "front" | "side" | "back";
+  objectId?: string;
 }
 
 export interface FloatText {
@@ -81,7 +122,8 @@ export interface FloatText {
 
 export type Inspect =
   | { kind: "unit"; unit: Unit }
-  | { kind: "tile"; tile: Tile };
+  | { kind: "tile"; tile: Tile }
+  | { kind: "object"; id: string };
 
 export const DIRS: Vec2[] = [
   { x: 0, y: -1 },
@@ -144,10 +186,48 @@ export function nextYaw(yaw: number): number {
 }
 
 export function scaleEnemy(u: Unit, power: Diff): void {
-  if (u.team !== "enemy") return;
+  if (u.stance !== "hostile" && u.team !== "enemy") return;
   const m = POWER_MULT[power];
   u.maxHp = Math.max(1, Math.round(u.maxHp * m));
   u.hp = u.maxHp;
   u.atk = Math.max(1, Math.round(u.atk * m));
   u.def = Math.max(0, Math.round(u.def * m));
+}
+
+export function stanceOf(u: Unit): Stance {
+  return u.stance;
+}
+
+export function factionColor(u: Unit): string {
+  const s = stanceOf(u);
+  if (s === "friendly") return "#5ad0ff";
+  if (s === "hostile") return "#ff4d6d";
+  return "#e0c45a";
+}
+
+export function isPlayerControlled(u: Unit): boolean {
+  return u.team === "player" && !u.npc && !u.dead;
+}
+
+export function canPassThrough(mover: Unit, who: Unit): boolean {
+  if (who.dead) return true;
+  return mover.team === who.team || (stanceOf(mover) === "friendly" && stanceOf(who) === "friendly");
+}
+
+export function isHostilePair(a: Unit, b: Unit): boolean {
+  if (a.dead || b.dead || a.id === b.id) return false;
+  if (a.behaviour === "indiscriminate" || b.behaviour === "indiscriminate") return true;
+  const sa = stanceOf(a);
+  const sb = stanceOf(b);
+  if (sa === "hostile" && sb === "friendly") return true;
+  if (sa === "friendly" && sb === "hostile") return true;
+  if (sa === "neutral" && sb === "hostile") return true;
+  if (sa === "hostile" && sb === "neutral") return true;
+  return false;
+}
+
+export function provoke(u: Unit): void {
+  u.stance = "hostile";
+  u.team = "enemy";
+  if (u.behaviour === "idle" || u.behaviour === "flee") u.behaviour = "combat";
 }

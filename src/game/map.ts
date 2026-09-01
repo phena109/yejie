@@ -1,6 +1,7 @@
+import { makeObject, objBlocks, objIndex, type BoardObj, type ObjDef } from "./objects";
 import { type Prop, type Terrain, type Tile, key } from "./types";
 
-export type MapTheme = "roof" | "alley";
+export type MapTheme = "roof" | "alley" | "warehouse" | "street" | "plaza";
 
 export interface MapDef {
   w: number;
@@ -9,6 +10,7 @@ export interface MapDef {
   heights: string[];
   blocked: Array<[number, number, Prop]>;
   lamps?: Array<[number, number]>;
+  objects?: ObjDef[];
 }
 
 export class GameMap {
@@ -16,6 +18,7 @@ export class GameMap {
   readonly h: number;
   readonly theme: MapTheme;
   readonly tiles: Tile[][] = [];
+  objects: BoardObj[] = [];
 
   constructor(def: MapDef) {
     this.w = def.w;
@@ -45,6 +48,7 @@ export class GameMap {
       }
       this.tiles.push(row);
     }
+    this.objects = (def.objects ?? []).map((o, i) => makeObject(o, i));
   }
 
   inBounds(x: number, y: number): boolean {
@@ -56,12 +60,30 @@ export class GameMap {
     return this.tiles[y][x];
   }
 
+  objAt(x: number, y: number): BoardObj | undefined {
+    return objIndex(this.objects).get(key(x, y));
+  }
+
   heightAt(x: number, y: number): number {
-    return this.tile(x, y)?.h ?? 0;
+    const t = this.tile(x, y);
+    if (!t) return 0;
+    const o = this.objAt(x, y);
+    const extra = o && !o.gone && o.kind === "platform" ? o.standH : 0;
+    return t.h + extra;
   }
 
   walkable(x: number, y: number): boolean {
     const t = this.tile(x, y);
-    return !!t && !t.blocked;
+    if (!t || t.blocked) return false;
+    const o = this.objAt(x, y);
+    if (o && objBlocks(o)) return false;
+    return true;
+  }
+
+  unblock(x: number, y: number): void {
+    const t = this.tile(x, y);
+    if (!t) return;
+    t.blocked = false;
+    if (t.prop === "crate" || t.prop === "stall") t.prop = undefined;
   }
 }

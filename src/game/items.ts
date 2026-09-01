@@ -57,5 +57,5 @@ export function takeItem(inv: ItemStack[], id: ItemId): boolean {
 }
 
 export function itemAllies(units: Unit[]): Unit[] {
-  return units.filter((u) => !u.dead && (u.team === "player" || u.npc));
+  return units.filter((u) => !u.dead && (u.stance === "friendly" || u.team === "player"));
 }

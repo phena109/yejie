@@ -1,6 +1,7 @@
 import type { Cam } from "./renderer";
 import type { ItemStack } from "./items";
-import type { Diff, Dir, Phase } from "./types";
+import type { SavedObj } from "./objects";
+import type { AnimClip, Archetype, Behaviour, Diff, Dir, Gender, Phase, SkillKind, Stance, Team } from "./types";
 
 export const SLOT_COUNT = 3;
 const KEY = "yejie-v1";
@@ -21,6 +22,15 @@ export interface SavedUnit {
   movedThisTurn: boolean;
   actedThisTurn: boolean;
   atkBuff: number;
+  team?: Team;
+  stance?: Stance;
+  behaviour?: Behaviour;
+  archetype?: Archetype;
+  gender?: Gender;
+  skillKind?: SkillKind;
+  rangeMin?: number;
+  rangeMax?: number;
+  anim?: AnimClip;
 }
 
 export interface SaveGame {
@@ -43,6 +53,7 @@ export interface SaveGame {
   originDir: Dir;
   m1DropGiven: boolean;
   missionStartInventory: ItemStack[];
+  objects?: SavedObj[];
 }
 
 export interface SaveStore {
