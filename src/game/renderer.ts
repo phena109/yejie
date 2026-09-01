@@ -1,4 +1,5 @@
 import type { GameMap } from "./map";
+import { spriteFacesLeft, spriteOf } from "./sprites";
 import type { FloatText, Phase, Tile, Unit, Vec2 } from "./types";
 import { DIRS, key, nextYaw, yawDir, yawPoint } from "./types";
 
@@ -617,6 +618,12 @@ export class Renderer {
     ctx.ellipse(p.x, p.y + 4 * z, 11 * scale, 5.5 * scale, 0, 0, Math.PI * 2);
     ctx.fill();
 
+    const img = spriteOf(u);
+    const dh = (elite ? 78 : npc ? 70 : 72) * scale;
+    const dw = img ? (img.naturalWidth / img.naturalHeight) * dh : 20 * scale;
+    const faceLeft = fx - fy < 0;
+    const flip = faceLeft !== spriteFacesLeft(u);
+
     if (overlays.selected?.id === u.id) {
       ctx.strokeStyle = accent;
       ctx.lineWidth = 2;
@@ -626,64 +633,46 @@ export class Renderer {
     if (overlays.target?.id === u.id) {
       ctx.strokeStyle = "#ffe08a";
       ctx.lineWidth = 2;
-      ctx.strokeRect(x - 16 * scale, y - 28 * scale, 32 * scale, 40 * scale);
+      ctx.strokeRect(x - dw * 0.55, y - dh - 4 * scale, dw * 1.1, dh + 10 * scale);
     }
 
-    ctx.fillStyle = body;
-    ctx.beginPath();
-    ctx.moveTo(x, y + 12 * scale);
-    ctx.lineTo(x - 10 * scale, y + 2 * scale);
-    ctx.lineTo(x - 8 * scale, y - 10 * scale);
-    ctx.lineTo(x + 8 * scale, y - 10 * scale);
-    ctx.lineTo(x + 10 * scale, y + 2 * scale);
-    ctx.closePath();
-    ctx.fill();
-    ctx.strokeStyle = accent;
-    ctx.lineWidth = 1.4;
-    ctx.stroke();
-
-    ctx.fillStyle = npc ? "#f0e6c8" : friend ? "#d7ece8" : elite ? "#f3e0b0" : "#e8c8c8";
-    ctx.beginPath();
-    ctx.arc(x, y - 14 * scale, 6.2 * scale, 0, Math.PI * 2);
-    ctx.fill();
-
-    if (u.role === "striker") {
-      ctx.strokeStyle = "#c9d7de";
-      ctx.lineWidth = 2;
+    if (img) {
+      ctx.save();
+      ctx.translate(x, y + 2 * scale);
+      if (flip) ctx.scale(-1, 1);
+      ctx.drawImage(img, -dw / 2, -dh, dw, dh);
+      ctx.restore();
+    } else {
+      ctx.fillStyle = body;
       ctx.beginPath();
-      ctx.moveTo(x + 10 * scale, y - 8 * scale);
-      ctx.lineTo(x + 16 * scale, y + 8 * scale);
+      ctx.moveTo(x, y + 12 * scale);
+      ctx.lineTo(x - 10 * scale, y + 2 * scale);
+      ctx.lineTo(x - 8 * scale, y - 10 * scale);
+      ctx.lineTo(x + 8 * scale, y - 10 * scale);
+      ctx.lineTo(x + 10 * scale, y + 2 * scale);
+      ctx.closePath();
+      ctx.fill();
+      ctx.strokeStyle = accent;
+      ctx.lineWidth = 1.4;
       ctx.stroke();
-    } else if (u.role === "controller") {
-      ctx.strokeStyle = "#7ecbff";
-      ctx.strokeRect(x - 6 * scale, y - 6 * scale, 12 * scale, 8 * scale);
-    } else if (u.role === "support") {
-      ctx.fillStyle = "#7dffb3";
-      ctx.fillRect(x - 11 * scale, y - 2 * scale, 7 * scale, 7 * scale);
-    } else if (elite) {
-      ctx.fillStyle = "#ffc857";
-      ctx.fillRect(x - 8 * scale, y - 18 * scale, 16 * scale, 3 * scale);
-    } else if (npc) {
-      ctx.fillStyle = "#d8c48a";
-      ctx.fillRect(x - 7 * scale, y - 4 * scale, 14 * scale, 5 * scale);
+      ctx.fillStyle = npc ? "#f0e6c8" : friend ? "#d7ece8" : elite ? "#f3e0b0" : "#e8c8c8";
+      ctx.beginPath();
+      ctx.arc(x, y - 14 * scale, 6.2 * scale, 0, Math.PI * 2);
+      ctx.fill();
     }
 
-    const ix = (fx - fy) * 10 * scale;
-    const iy = (fx + fy) * 5 * scale;
-    ctx.fillStyle = accent;
-    ctx.beginPath();
-    ctx.moveTo(x + ix * 1.15, y + iy * 1.15 - 2 * scale);
-    ctx.lineTo(x + ix * 0.55 - iy * 0.35, y + iy * 0.55 + ix * 0.18);
-    ctx.lineTo(x + ix * 0.55 + iy * 0.35, y + iy * 0.55 - ix * 0.18);
-    ctx.closePath();
-    ctx.fill();
+    if (elite) {
+      ctx.fillStyle = "#ffc857";
+      ctx.fillRect(x - 8 * scale, y - dh - 14 * scale, 16 * scale, 3 * scale);
+    }
 
     const bw = 22 * scale;
     const ratio = Math.max(0, u.hp / u.maxHp);
+    const barY = y - dh - 8 * scale;
     ctx.fillStyle = "#111018";
-    ctx.fillRect(x - bw / 2, y - 28 * scale, bw, 3.5 * scale);
+    ctx.fillRect(x - bw / 2, barY, bw, 3.5 * scale);
     ctx.fillStyle = npc ? "#ffc857" : friend ? "#3ef0d0" : "#ff4d6d";
-    ctx.fillRect(x - bw / 2, y - 28 * scale, bw * ratio, 3.5 * scale);
+    ctx.fillRect(x - bw / 2, barY, bw * ratio, 3.5 * scale);
 
     ctx.fillStyle = "#e8eef2";
     ctx.font = `${Math.max(9, 10 * z)}px sans-serif`;
@@ -693,8 +682,8 @@ export class Renderer {
     ctx.restore();
 
     if (done) {
-      const ex = x + 11 * scale;
-      const ey = y - 22 * scale;
+      const ex = x + dw * 0.42;
+      const ey = y - dh + 6 * scale;
       const er = 7.2 * scale;
       ctx.fillStyle = "rgba(8, 8, 14, 0.88)";
       ctx.beginPath();

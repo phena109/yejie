@@ -22,6 +22,7 @@ import {
   skillTargets,
   type MoveField,
 } from "./pathfinding";
+import { audio } from "./audio";
 import { PITCH_DEFAULT, Renderer } from "./renderer";
 import {
   SLOT_COUNT,
@@ -32,6 +33,7 @@ import {
   type SaveGame,
   type SavedUnit,
 } from "./save";
+import { loadSprites } from "./sprites";
 import {
   DIFF_LABEL,
   delay,
@@ -47,6 +49,7 @@ import {
   type Unit,
   type Vec2,
 } from "./types";
+import { BUILD_STAMP, VERSION } from "./version";
 
 function el<T extends HTMLElement>(id: string): T {
   const n = document.getElementById(id);
@@ -104,6 +107,8 @@ export class Game {
   pendingItem: ItemId | null = null;
   m1DropGiven = false;
   modalKind: "off" | "bag" | "save" | "load" | "target" = "off";
+  paused = false;
+  pauseOpen = false;
 
   renderer: Renderer;
   input: PointerInput;
@@ -139,13 +144,16 @@ export class Game {
   private btnEnd = el<HTMLButtonElement>("btn-end");
   private btnNext = el<HTMLButtonElement>("btn-next");
   private btnRotate = el<HTMLButtonElement>("btn-rotate");
-  private btnBag = el<HTMLButtonElement>("btn-bag");
-  private btnSave = el<HTMLButtonElement>("btn-save");
+  private btnPause = el<HTMLButtonElement>("btn-pause");
   private btnContinue = el<HTMLButtonElement>("btn-continue");
+  private btnMute = el<HTMLButtonElement>("btn-mute");
+  private pauseEl = el<HTMLElement>("pause");
+  private titleBuild = el<HTMLElement>("title-build");
   private camHint = el<HTMLElement>("cam-hint");
   private yawSlider = el<HTMLInputElement>("yaw-slider");
   private pitchSlider = el<HTMLInputElement>("pitch-slider");
   private pendingSlot: number | null = null;
+  private pendingQuit = false;
 
   constructor(canvas: HTMLCanvasElement) {
     this.renderer = new Renderer(canvas);
@@ -167,12 +175,20 @@ export class Game {
     this.btnConfirm.addEventListener("click", () => void this.confirm());
     this.btnEnd.addEventListener("click", () => void this.endTurn());
     this.btnRotate.addEventListener("click", () => this.rotateMap());
-    this.btnBag.addEventListener("click", () => this.openBag());
-    this.btnSave.addEventListener("click", () => this.openSaves("save"));
+    this.btnPause.addEventListener("click", () => this.openPause());
     el<HTMLButtonElement>("btn-new").addEventListener("click", () => this.newGame());
     this.btnContinue.addEventListener("click", () => this.continueGame());
     el<HTMLButtonElement>("btn-load").addEventListener("click", () => this.openSaves("load"));
     el<HTMLButtonElement>("btn-bag-title").addEventListener("click", () => this.openBag());
+    el<HTMLButtonElement>("btn-refresh").addEventListener("click", () => void this.refreshApp());
+    el<HTMLButtonElement>("btn-brief-title").addEventListener("click", () => this.goTitle());
+    el<HTMLButtonElement>("btn-result-title").addEventListener("click", () => this.goTitle());
+    el<HTMLButtonElement>("btn-resume").addEventListener("click", () => this.closePause());
+    el<HTMLButtonElement>("btn-pause-bag").addEventListener("click", () => this.openBag());
+    el<HTMLButtonElement>("btn-pause-save").addEventListener("click", () => this.openSaves("save"));
+    el<HTMLButtonElement>("btn-pause-load").addEventListener("click", () => this.openSaves("load"));
+    this.btnMute.addEventListener("click", () => this.toggleMute());
+    el<HTMLButtonElement>("btn-quit-title").addEventListener("click", () => this.quitToTitle());
     el<HTMLButtonElement>("modal-close").addEventListener("click", () => this.closeModal());
     el<HTMLButtonElement>("confirm-yes").addEventListener("click", () => this.confirmYes());
     el<HTMLButtonElement>("confirm-no").addEventListener("click", () => this.confirmNo());
@@ -189,11 +205,25 @@ export class Game {
       this.renderer.setPitch(Number(this.pitchSlider.value));
     });
     this.modalBody.addEventListener("click", (e) => this.onModalClick(e));
+    this.titleBuild.textContent = `版本 ${VERSION}　${BUILD_STAMP}`;
+    this.syncMuteBtn();
+    void loadSprites();
+    audio.setBgm("title");
     this.refreshContinue();
   }
 
   get mission(): Mission {
     return MISSIONS[this.missionIndex] ?? MISSIONS[0];
+  }
+
+  private async waitMs(ms: number): Promise<void> {
+    const end = performance.now() + ms;
+    while (performance.now() < end) {
+      while (this.paused) await delay(40);
+      const left = end - performance.now();
+      if (left <= 0) break;
+      await delay(Math.min(40, left));
+    }
   }
 
   start(): void {
@@ -373,6 +403,7 @@ export class Game {
     this.title.hidden = true;
     this.briefing.hidden = false;
     this.phase = "briefing";
+    audio.setBgm("title");
     this.syncUi();
     this.autosave();
   }
@@ -388,6 +419,7 @@ export class Game {
     this.briefing.hidden = true;
     this.title.hidden = true;
     this.phase = "select";
+    audio.setBgm("battle");
     this.renderer.centerOn(this.units, this.map);
     this.syncUi();
     this.autosave();
@@ -477,6 +509,7 @@ export class Game {
     if (!this.field.cost.has(k)) return;
     if (dest.x === u.x && dest.y === u.y) return;
     this.busy = true;
+    audio.play("move");
     this.origin = { x: u.x, y: u.y };
     this.originDir = u.dir;
     const path = reconstructPath(this.field, dest);
@@ -484,7 +517,7 @@ export class Game {
       u.dir = dirFromTo(path[i - 1], path[i]);
       u.x = path[i].x;
       u.y = path[i].y;
-      await delay(90);
+      await this.waitMs(90);
     }
     u.movedThisTurn = true;
     this.busy = false;
@@ -497,7 +530,7 @@ export class Game {
   }
 
   private onTap(p: Vec2): void {
-    if (this.busy) return;
+    if (this.busy || this.pauseOpen) return;
     if (
       this.phase === "title" ||
       this.phase === "briefing" ||
@@ -590,6 +623,7 @@ export class Game {
     const targets = skillTargets(actor, this.map, this.units);
     const t = targets.find((u) => u.x === tile.x && u.y === tile.y);
     if (!t) {
+      audio.play("miss");
       this.backFromSkill();
       return;
     }
@@ -602,6 +636,7 @@ export class Game {
   private tryItemTarget(tile: Vec2): void {
     const t = itemAllies(this.units).find((u) => u.x === tile.x && u.y === tile.y);
     if (!t) {
+      audio.play("miss");
       this.backFromItem();
       return;
     }
@@ -700,13 +735,16 @@ export class Game {
     const target = f.target;
     actor.dir = dirFromTo(actor, target);
     actor.lunge = 1;
-    await delay(140);
+    if (f.heal) audio.play("heal");
+    else audio.play(f.kind === "skill" ? "skill" : "attack");
+    await this.waitMs(140);
     if (f.heal) {
       target.hp = Math.min(target.maxHp, target.hp + f.heal);
       this.spawnFloat(target, `+${f.heal}`, "#7dffb3");
       this.log = `${actor.name} 為 ${target.name} 回復 ${f.heal}`;
     } else {
       target.hp = Math.max(0, target.hp - f.dmg);
+      audio.play("hit");
       this.spawnFloat(target, `${f.dmg}`, "#ffd0d8");
       this.log = `${actor.name} 對 ${target.name} 造成 ${f.dmg} 傷害`;
       if (actor.atkBuff) actor.atkBuff = 0;
@@ -723,7 +761,7 @@ export class Game {
     if (f.kind === "skill") actor.skillUsed = true;
     actor.actedThisTurn = true;
     actor.lunge = 0;
-    await delay(280);
+    await this.waitMs(280);
     this.busy = false;
     if (this.checkEnd()) return;
     if (actor.movedThisTurn) {
@@ -773,7 +811,7 @@ export class Game {
         e.acted = true;
         this.log = `${e.name} 被攔住，無法行動。`;
         this.syncUi();
-        await delay(420);
+        await this.waitMs(420);
         continue;
       }
       const plan = planEnemy(e, this.map, this.units, protectId, this.intel);
@@ -781,28 +819,30 @@ export class Game {
         e.dir = dirFromTo(plan.path[i - 1], plan.path[i]);
         e.x = plan.path[i].x;
         e.y = plan.path[i].y;
-        await delay(85);
+        await this.waitMs(85);
       }
       if (plan.target && !plan.target.dead) {
         e.dir = dirFromTo(e, plan.target);
         e.lunge = 1;
         const f = makeAttackForecast(e, plan.target, this.map);
+        audio.play("attack");
         plan.target.hp = Math.max(0, plan.target.hp - f.dmg);
+        audio.play("hit");
         this.spawnFloat(plan.target, `${f.dmg}`, "#ff4d6d");
         this.log = `${e.name} 對 ${plan.target.name} 造成 ${f.dmg} 傷害`;
         if (plan.target.hp <= 0) {
           plan.target.dead = true;
           this.log = `${plan.target.name} 倒下。`;
         }
-        await delay(160);
+        await this.waitMs(160);
         e.lunge = 0;
-        await delay(220);
+        await this.waitMs(220);
         if (this.checkEnd()) {
           this.busy = false;
           return;
         }
       } else {
-        await delay(120);
+        await this.waitMs(120);
       }
       e.acted = true;
     }
@@ -849,6 +889,9 @@ export class Game {
     const m = this.mission;
     this.phase = "victory";
     this.busy = false;
+    this.closePause();
+    audio.setBgm(null);
+    audio.play("victory");
     this.clearSel();
     this.inspect = null;
     this.result.hidden = false;
@@ -871,6 +914,9 @@ export class Game {
     const m = this.mission;
     this.phase = "defeat";
     this.busy = false;
+    this.closePause();
+    audio.setBgm(null);
+    audio.play("defeat");
     this.clearSel();
     this.inspect = null;
     this.result.hidden = false;
@@ -910,11 +956,108 @@ export class Game {
     }
   }
 
+
+  private openPause(): void {
+    if (
+      this.phase === "title" ||
+      this.phase === "briefing" ||
+      this.phase === "victory" ||
+      this.phase === "defeat"
+    ) {
+      return;
+    }
+    this.paused = true;
+    this.pauseOpen = true;
+    this.pauseEl.hidden = false;
+    this.syncMuteBtn();
+    audio.play("pause");
+  }
+
+  private closePause(): void {
+    this.pauseEl.hidden = true;
+    this.pauseOpen = false;
+    this.paused = false;
+  }
+
+  private toggleMute(): void {
+    audio.toggleMute();
+    this.syncMuteBtn();
+  }
+
+  private syncMuteBtn(): void {
+    this.btnMute.textContent = audio.muted ? "取消靜音" : "靜音";
+  }
+
+  private quitToTitle(): void {
+    const mid = this.playable() || this.phase === "enemy";
+    if (!mid) {
+      this.goTitle();
+      return;
+    }
+    this.pendingQuit = true;
+    this.confirmText.textContent = "返回標題？進度在存檔與自動存檔裡。";
+    this.confirmEl.hidden = false;
+  }
+
+  private goTitle(): void {
+    this.pendingQuit = false;
+    this.closePause();
+    this.closeModal();
+    this.confirmEl.hidden = true;
+    this.result.hidden = true;
+    this.result.classList.remove("lose");
+    this.briefing.hidden = true;
+    this.title.hidden = false;
+    this.phase = "title";
+    this.busy = false;
+    this.clearSel();
+    this.inspect = null;
+    audio.setBgm("title");
+    this.refreshContinue();
+    this.syncUi();
+  }
+
+  private async refreshApp(): Promise<void> {
+    const btn = el<HTMLButtonElement>("btn-refresh");
+    btn.disabled = true;
+    btn.textContent = "正在更新…";
+    try {
+      if ("caches" in window) {
+        const keys = await caches.keys();
+        await Promise.all(keys.map((k) => caches.delete(k)));
+      }
+    } catch {
+      /* ignore */
+    }
+    try {
+      if ("serviceWorker" in navigator) {
+        const regs = await navigator.serviceWorker.getRegistrations();
+        for (const reg of regs) {
+          if (reg.waiting) reg.waiting.postMessage("skipWaiting");
+          try {
+            await reg.update();
+          } catch {
+            /* ignore */
+          }
+          if (reg.waiting) reg.waiting.postMessage("skipWaiting");
+          await reg.unregister();
+        }
+      }
+    } catch {
+      /* ignore */
+    }
+    const url = new URL(location.href);
+    url.searchParams.set("v", VERSION);
+    url.searchParams.set("r", String(Date.now()));
+    location.replace(url.toString());
+  }
+
   private playable(): boolean {
     return this.phase === "select" || this.phase === "skillAim" || this.phase === "forecast" || this.phase === "itemAim";
   }
 
   private openBag(): void {
+    if (this.pauseOpen) this.pauseEl.hidden = true;
     this.modalKind = "bag";
     this.modal.hidden = false;
     this.modalKicker.textContent = "道具";
@@ -961,6 +1104,7 @@ export class Game {
   }
 
   private openSaves(kind: "save" | "load"): void {
+    if (this.pauseOpen) this.pauseEl.hidden = true;
     this.modalKind = kind;
     this.modal.hidden = false;
     this.modalKicker.textContent = kind === "save" ? "存檔" : "讀檔";
@@ -1019,6 +1163,7 @@ export class Game {
       return;
     }
     this.pendingItem = id;
+    this.closePause();
     this.closeModal();
     this.inspect = null;
     this.forecast = null;
@@ -1058,6 +1203,7 @@ export class Game {
     if (!takeItem(this.inventory, id)) return;
     this.closeModal();
     this.busy = true;
+    audio.play("heal");
     if (id === "bandage") {
       const heal = Math.min(BANDAGE_HEAL, target.maxHp - target.hp);
       target.hp = Math.min(target.maxHp, target.hp + BANDAGE_HEAL);
@@ -1071,7 +1217,7 @@ export class Game {
     actor.actedThisTurn = true;
     this.pendingItem = null;
     this.skillTiles.clear();
-    await delay(220);
+    await this.waitMs(220);
     this.busy = false;
     if (actor.movedThisTurn) {
       await this.finishUnit();
@@ -1085,6 +1231,7 @@ export class Game {
     this.modal.hidden = true;
     this.modalKind = "off";
     this.modalBody.innerHTML = "";
+    if (this.pauseOpen) this.pauseEl.hidden = false;
   }
 
   private trySaveSlot(i: number): void {
@@ -1100,6 +1247,11 @@ export class Game {
 
   private confirmYes(): void {
     this.confirmEl.hidden = true;
+    if (this.pendingQuit) {
+      this.pendingQuit = false;
+      this.goTitle();
+      return;
+    }
     if (this.pendingSlot !== null) this.writeSlot(this.pendingSlot);
     this.pendingSlot = null;
   }
@@ -1107,6 +1259,7 @@ export class Game {
   private confirmNo(): void {
     this.confirmEl.hidden = true;
     this.pendingSlot = null;
+    this.pendingQuit = false;
   }
 
   private writeSlot(i: number): void {
@@ -1125,6 +1278,7 @@ export class Game {
     const s = store.slots[i];
     if (!s) return;
     this.closeModal();
+    this.closePause();
     this.applySave(s);
   }
 
@@ -1234,6 +1388,10 @@ export class Game {
         }
       }
     }
+    this.closePause();
+    if (this.phase === "title" || this.phase === "briefing") audio.setBgm("title");
+    else if (this.phase === "victory" || this.phase === "defeat") audio.setBgm(null);
+    else audio.setBgm("battle");
     this.refreshContinue();
     this.syncUi();
   }
@@ -1341,10 +1499,14 @@ export class Game {
       this.phase === "title" ||
       this.phase === "victory" ||
       this.phase === "defeat";
+    const hidePause =
+      this.phase === "briefing" ||
+      this.phase === "title" ||
+      this.phase === "victory" ||
+      this.phase === "defeat";
     this.btnEnd.hidden = !leftover || hideChrome;
     this.btnRotate.hidden = hideChrome;
-    this.btnBag.hidden = hideChrome;
-    this.btnSave.hidden = hideChrome;
+    this.btnPause.hidden = hidePause;
     this.camHint.hidden = hideChrome;
     const fine = window.matchMedia("(pointer: fine)").matches;
     this.yawSlider.hidden = hideChrome || !fine;

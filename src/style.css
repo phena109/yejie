@@ -203,8 +203,7 @@ body {
 
 #btn-end,
 #btn-rotate,
-#btn-bag,
-#btn-save {
+#btn-pause {
   position: absolute;
   bottom: calc(var(--dock-h) + env(safe-area-inset-bottom) + 10px);
   z-index: 7;
@@ -223,17 +222,13 @@ body {
   right: 12px;
 }
 
-#btn-save {
+#btn-pause {
   right: 12px;
   bottom: calc(var(--dock-h) + env(safe-area-inset-bottom) + 58px);
 }
 
 #btn-rotate {
   left: 12px;
-}
-
-#btn-bag {
-  left: 80px;
 }
 
 #cam-hint {
@@ -267,8 +262,7 @@ body {
 
 #btn-end[hidden],
 #btn-rotate[hidden],
-#btn-bag[hidden],
-#btn-save[hidden],
+#btn-pause[hidden],
 #cam-hint[hidden],
 #yaw-slider[hidden],
 #pitch-slider[hidden] {
@@ -319,6 +313,7 @@ body {
 #briefing,
 #result,
 #title,
+#pause,
 #modal,
 #confirm {
   position: fixed;
@@ -336,6 +331,11 @@ body {
   align-items: center;
 }
 
+#pause {
+  z-index: 25;
+  align-items: center;
+}
+
 #modal {
   z-index: 30;
   align-items: center;
@@ -350,6 +350,7 @@ body {
 #briefing[hidden],
 #result[hidden],
 #title[hidden],
+#pause[hidden],
 #modal[hidden],
 #confirm[hidden] {
   display: none;
@@ -358,6 +359,7 @@ body {
 #briefing-card,
 #result-card,
 #title-card,
+#pause-card,
 #modal-card,
 #confirm-card {
   width: min(430px, 100%);
@@ -373,6 +375,7 @@ body {
 
 #briefing .eyebrow,
 #title .eyebrow,
+#pause .eyebrow,
 #modal .eyebrow {
   margin: 0;
   color: var(--neon);
@@ -449,9 +452,11 @@ body {
 #btn-restart,
 #btn-next,
 #btn-new,
+#btn-resume,
 #confirm-yes,
 #modal-card > button,
-#title-card > button {
+#title-card > button,
+#pause-card > button {
   width: 100%;
   min-height: 48px;
   margin-top: 8px;
@@ -468,6 +473,14 @@ button.ghost,
 #btn-continue,
 #btn-load,
 #btn-bag-title,
+#btn-refresh,
+#btn-brief-title,
+#btn-result-title,
+#btn-pause-bag,
+#btn-pause-save,
+#btn-pause-load,
+#btn-mute,
+#btn-quit-title,
 #modal-close,
 #confirm-no {
   background: #161622 !important;
@@ -597,6 +610,21 @@ button:disabled {
 
 #confirm-card {
   width: min(360px, 100%);
+}
+
+#log {
+  left: 12px;
+  right: 12px;
+  padding: 0 76px;
+}
+
+.ver,
+#title-build {
+  margin: 12px 0 0;
+  text-align: center;
+  font-size: 11px;
+  color: var(--muted);
+  letter-spacing: 0.06em;
 }
 
 #log {

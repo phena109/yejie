@@ -97,17 +97,21 @@ Autosave writes after briefing, battle start, unit finish, enemy phase, and win 
 - Mara Ellison, constable, striker. Move 5, Jump 2. Can vault from street onto roof. Skill 重擊: heavy melee with extra height.
 - Dana Ruiz, partner, controller. Move 4, Jump 1. Needs stairs. Skill 攔住: target skips their next turn, plus chip damage.
 - Priya Shah, market first-aider, support. Move 4, Jump 1. Skill 包紮: heal an adjacent ally or self.
-- Mission 01 enemies: Assembly field people (Neil, Cole, Nash, Pike, Voss) plus Crosby on the north roof.
-- Mission 02: Deputy Harbour Chief Rowan Hale (NPC to protect) on the loading bay. Site lead Beckett plus Drake, Quinn, Moss, Reed, Shaw.
+- Mission 01 enemies: Assembly field people (Neil, Cole, Nash, Pike) plus Crosby on the north roof.
+- Mission 02: Deputy Harbour Chief Rowan Hale (NPC to protect) starts near the squad behind crate cover. Site lead Beckett plus Drake, Quinn, Moss, Reed. Hale must live; he is not invincible.
 
 ## What is in the slice
 
-- Two maps, each 10 by 12. Mission 01: street height 0, stairs height 1, rooftop height 2, market stalls and rooftop A/C as blocked props. Mission 02: alley, loading bay, fire-escape height, crates.
-- Full flow: start screen, settings, briefing, fight, victory or defeat, 下一場 into mission 02, restart.
+- Two maps, each 10 by 12. Mission 01: street, stairs, rooftop, stall chokepoints and side roofs. Mission 02: alley, loading bay, fire-escape height, crate pocket for Hale.
+- Full flow: start screen, settings, briefing, fight, victory or defeat, 下一場 into mission 02, restart. 回到標題 from briefing, result, and pause (confirm if mid-fight; saves stay).
+- Pause menu on the fight UI: 繼續, 背包, 存檔, 讀檔, 靜音, 回到標題. Bag/save from pause do not skip a unit's turn. Pause freezes the enemy phase.
 - Select unit, show move and attack ranges together when both remain. Act in place, move after acting, or skip one. After Act with Move left, deselect and return later. Wait ends the unit. Both used ends the unit. 結束回合 ends the player phase. Items consume Act. Done units show E and fade.
 - Tap a unit or tile to inspect. Tap an in-range enemy to preview damage, Confirm to strike.
 - Camera starts on the player team. Drag to pan. Pinch to zoom. Two-finger twist for free yaw (map follows fingers). Two-finger vertical tilts pitch 15–75.
-- Original canvas art: wet asphalt, market stalls, crates, rooftop units, isometric diamonds. No copyrighted assets.
+- Billboard unit sprites (Mara, Dana, Priya, Assembly, Hale) anchored at the feet. Crosby/Beckett reuse the Assembly sprite with a gold mark.
+- Bundled Web Audio SFX and BGM (title/briefing, battle). First tap unlocks audio. Mute is remembered.
+- Title 重新載入 clears caches, updates the service worker, and reloads (iOS home screen and Android). Version stamp on the title screen.
+- Original canvas art for terrain plus original sprites. No copyrighted assets.
 
 ## What was cut on purpose
 

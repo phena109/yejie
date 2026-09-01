@@ -68,7 +68,7 @@ function planMid(unit: Unit, map: GameMap, units: Unit[], protectId?: string): A
       const { dmg, face, dh } = strikeDamage(ghost, p, map);
       let score = dmg * 10 + (p.hp <= dmg ? 80 : 0);
       if (p.role === "support") score += 6;
-      if (p.id === protectId) score += 24;
+      if (p.id === protectId) score += 14;
       if (face === "back") score += 8;
       if (dh > 0) score += 4;
       if (unit.role === "elite") score += 2;
