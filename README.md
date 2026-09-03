@@ -42,7 +42,7 @@ Mission 04: gang-replacement street. Leftover local crew (neutral; fight Assembl
 
 Mission 05: Assembly goes for Port Authority Director Marla Keene. Magician and clawed unit (wolverine archetype, not Marvel IP) appear; deniable as fireworks / animals. Win: Holt down and Keene alive.
 
-View: orthogonal ~45° isometric. Diamond tiles. Height as stacked blocks (street / stairs / roof). Canvas hybrid: terrain stays 2D isometric; units are low-poly 3D rigs projected through the same camera (idle / walk / attack / cast). Two-finger twist rotates yaw freely (any degree), inverted so the map sticks to the fingers. Two-finger up/down tilts pitch, locked 15°–75° (15 side-on, 75 top-down; default ~30° isometric). Pinch zooms. One-finger drag pans. Twist, pinch, and pitch can happen together. 旋轉 still snaps 90°. Desktop debug: right-drag (x yaw, y pitch) or the yaw/pitch sliders. Hit-testing follows the current yaw and pitch.
+View: orthogonal ~45° isometric. Diamond tiles. Height as stacked blocks (street / stairs / roof). Canvas hybrid: terrain stays 2D isometric; units are voxel 3D pixel-art models (MagicaVoxel / cube-pixel, ~14x20) projected through the same camera (idle breathe, walk, attack, cast). Two-finger twist rotates yaw freely (any degree), inverted so the map sticks to the fingers. Two-finger up/down tilts pitch, locked 15°–75° (15 side-on, 75 top-down; default ~30° isometric). Pinch zooms. One-finger drag pans. Twist, pinch, and pitch can happen together. 旋轉 still snaps 90°. Desktop debug: right-drag (x yaw, y pitch) or the yaw/pitch sliders. Hit-testing follows the current yaw and pitch.
 
 Inspect: tap terrain or a unit you did not pick as actor. Terrain shows name, height, walkable/blocked, street/stairs/roof, and any prop (stall, A/C, crate, lamp). Units show name, role, HP, atk/def/move/jump, skill name plus one line, and team. Cancel or tap empty UI dismisses inspect. Selecting your own unit for orders still works.
 
@@ -114,7 +114,7 @@ Autosave writes after briefing, battle start, unit finish, enemy phase, and win 
 - Select unit, show move and attack ranges together when both remain. Act in place, move after acting, or skip one. After Act with Move left, deselect and return later. Wait ends the unit. Both used ends the unit. 結束回合 ends the player phase. Items consume Act. Done units show E and fade.
 - Tap a unit or tile to inspect. Tap an in-range enemy to preview damage, Confirm to strike.
 - Camera starts on the player team. Drag to pan. Pinch to zoom. Two-finger twist for free yaw (map follows fingers). Two-finger vertical tilts pitch 15–75.
-- Low-poly 3D units (capsules/boxes) with facing yaw on the tile, faction colour rings, and a ground chevron (cool body, warm tip). Distinct silhouettes: Mara, Dana, Priya, Hale, Crosby, Beckett, delinquent, magician, wolverine, boxer, gunner, worker, official.
+- Voxel 3D pixel-art units (grid of cubes, not low-poly capsules) with facing yaw on the tile, faction colour rings, and a ground chevron (cool body, warm tip). Distinct silhouettes and body shapes: Mara, Dana, Priya, Hale, Crosby, Beckett, delinquent, magician, wolverine, boxer, gunner, worker, official.
 - Third parties: friendly / hostile / neutral; combat, flee, idle, indiscriminate. Neutral becomes hostile if attacked.
 - Grid objects: pickup (kit), trigger (switch / van door), destructible (barrel blast), stand-on (crate / pallet).
 - Bundled Web Audio SFX and BGM (title/briefing, battle). First tap unlocks audio. Mute is remembered.
