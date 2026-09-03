@@ -1,6 +1,6 @@
 import type { GameMap, MapTheme } from "./map";
 import type { BoardObj } from "./objects";
-import { CHAR_H, drawRig, localToGrid, type ProjectFn } from "./rig";
+import { CHAR_H, drawRig, localToGrid, spriteDrawHeight, type ProjectFn } from "./rig";
 import type { Dir, FloatText, Phase, Tile, Unit, Vec2 } from "./types";
 import { DIRS, factionColor, key, nextYaw, yawDir, yawPoint } from "./types";
 
@@ -658,7 +658,7 @@ export class Renderer {
       }
     }
 
-    ctx.fillStyle = "rgba(255,255,255,0.035)";
+    ctx.fillStyle = "rgba(255,255,255,0.055)";
     for (let i = 0; i < 5; i++) {
       const u = hash01(t.x * 19 + t.y * 23 + i);
       const v = hash01(t.x * 29 + t.y * 31 + i + 4);
@@ -676,7 +676,7 @@ export class Renderer {
     ctx.beginPath();
     ctx.moveTo(top[hi].x, top[hi].y);
     ctx.lineTo(top[(hi + 1) % 4].x, top[(hi + 1) % 4].y);
-    ctx.strokeStyle = "rgba(220, 245, 255, 0.22)";
+    ctx.strokeStyle = "rgba(230, 248, 255, 0.38)";
     ctx.stroke();
     ctx.beginPath();
     ctx.moveTo(top[hi].x, top[hi].y);
@@ -851,16 +851,6 @@ export class Renderer {
     }
   }
 
-  private projectFor(u: Unit, map: GameMap): ProjectFn {
-    const h = map.heightAt(u.x, u.y);
-    return (lx: number, ly: number, lz: number) => {
-      const g = localToGrid(lx, ly, u.dir);
-      const screen = this.worldToScreen(u.x + g.x, u.y + g.y, h + lz * CHAR_H);
-      const yp = yawPoint(u.x + g.x, u.y + g.y, this.yaw, map.w, map.h);
-      return { x: screen.x, y: screen.y, d: yp.x + yp.y - lz * CHAR_H * 0.45 };
-    };
-  }
-
   private projectAt(gx: number, gy: number, h: number, dir: Dir, map: GameMap): ProjectFn {
     return (lx: number, ly: number, lz: number) => {
       const g = localToGrid(lx, ly, dir);
@@ -969,22 +959,22 @@ export class Renderer {
     const dx = (face.x - face.y) * 6 * z * (u.lunge || 0);
     const dy = (face.x + face.y) * 3 * z * (u.lunge || 0);
     const x = p.x + dx;
-    const feetY = p.y + dy + 2 * z;
+    const feetY = p.y + dy + 1 * z;
     const done = u.acted;
     ctx.save();
     if (done) ctx.globalAlpha *= 0.45;
 
-    ctx.fillStyle = "rgba(0,0,0,0.4)";
+    ctx.fillStyle = "rgba(0,0,0,0.38)";
     ctx.beginPath();
-    ctx.ellipse(x, feetY + 1 * z, 12 * scale, 5.6 * scale, 0, 0, Math.PI * 2);
+    ctx.ellipse(x, feetY + 1 * z, 9 * scale, 3.6 * scale, 0, 0, Math.PI * 2);
     ctx.fill();
 
     ctx.strokeStyle = accent;
-    ctx.lineWidth = Math.max(2.2, 2.6 * z);
+    ctx.lineWidth = Math.max(1.6, 1.8 * z);
     ctx.beginPath();
-    ctx.ellipse(x, feetY + 1 * z, 13.5 * scale, 6.4 * scale, 0, 0, Math.PI * 2);
+    ctx.ellipse(x, feetY + 1 * z, 10.2 * scale, 4.2 * scale, 0, 0, Math.PI * 2);
     ctx.stroke();
-    ctx.strokeStyle = "rgba(8,8,12,0.85)";
+    ctx.strokeStyle = "rgba(8,8,12,0.75)";
     ctx.lineWidth = 1;
     ctx.stroke();
 
@@ -1001,19 +991,14 @@ export class Renderer {
       ctx.stroke();
     }
 
-    const project = this.projectFor(u, map);
-    const shifted: ProjectFn = (lx, ly, lz) => {
-      const q = project(lx, ly, lz);
-      return { x: q.x + dx, y: q.y + dy, d: q.d };
-    };
-    drawRig(ctx, shifted, u, this.time, z);
+    drawRig(ctx, u, this.time, z, x, feetY, this.yaw);
 
     this.drawFacingWedge(u, map, x, feetY, z);
 
-    const dh = 64 * scale;
+    const dh = spriteDrawHeight(z);
     const bw = 22 * scale;
     const ratio = Math.max(0, u.hp / u.maxHp);
-    const barY = feetY - dh - 4 * scale;
+    const barY = feetY - dh - 3 * scale;
     ctx.fillStyle = "#111018";
     ctx.fillRect(x - bw / 2, barY, bw, 3.5 * scale);
     ctx.fillStyle = accent;
@@ -1022,7 +1007,7 @@ export class Renderer {
     ctx.fillStyle = "#e8eef2";
     ctx.font = `${Math.max(9, 10 * z)}px sans-serif`;
     ctx.textAlign = "center";
-    ctx.fillText(u.name.split(" ")[0], x, feetY + 22 * z);
+    ctx.fillText(u.name.split(" ")[0], x, feetY + 12 * z);
 
     ctx.restore();
 
@@ -1051,16 +1036,16 @@ export class Renderer {
     const h = map.heightAt(u.x, u.y);
     const project = this.projectAt(u.x, u.y, h, u.dir, map);
     const tip = [
-      project(0, 0.48, 0.035),
-      project(-0.16, 0.16, 0.035),
-      project(0.16, 0.16, 0.035),
+      project(0, 0.26, 0.03),
+      project(-0.09, 0.09, 0.03),
+      project(0.09, 0.09, 0.03),
     ];
     const body = [
-      project(-0.2, 0.14, 0.02),
-      project(0.2, 0.14, 0.02),
-      project(0.24, -0.22, 0.02),
-      project(0, -0.08, 0.02),
-      project(-0.24, -0.22, 0.02),
+      project(-0.11, 0.08, 0.018),
+      project(0.11, 0.08, 0.018),
+      project(0.13, -0.12, 0.018),
+      project(0, -0.04, 0.018),
+      project(-0.13, -0.12, 0.018),
     ];
     ctx.beginPath();
     ctx.moveTo(body[0].x, body[0].y);
@@ -1068,7 +1053,7 @@ export class Renderer {
     ctx.closePath();
     ctx.lineJoin = "round";
     ctx.strokeStyle = "rgba(6,8,14,0.95)";
-    ctx.lineWidth = Math.max(2.4, 2.8 * z);
+    ctx.lineWidth = Math.max(1.6, 1.8 * z);
     ctx.stroke();
     ctx.fillStyle = "#5a88c8";
     ctx.fill();

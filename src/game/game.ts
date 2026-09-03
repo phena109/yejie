@@ -27,6 +27,7 @@ import {
 } from "./pathfinding";
 import { BARREL_BLAST } from "./objects";
 import { ATTACK_MS, CAST_MS } from "./rig";
+import { loadHd2dSprites } from "./sprites";
 import { audio } from "./audio";
 import { PITCH_DEFAULT, Renderer, type AreaKind } from "./renderer";
 import {
@@ -174,6 +175,7 @@ export class Game {
 
   constructor(canvas: HTMLCanvasElement) {
     this.renderer = new Renderer(canvas);
+    void loadHd2dSprites();
     this.input = new PointerInput(canvas, this.renderer);
     this.input.onTap = (p) => this.onTap(p);
     this.map = new GameMap(this.mission.map);
@@ -263,22 +265,25 @@ export class Game {
       );
     };
     this.syncUi();
-    if (shot) {
-      this.renderer.forceSize(390, 640);
-      this.renderer.centerOn(this.units, this.map);
-      for (let i = 0; i < 8; i++) paint();
-      const img = document.createElement("img");
-      img.alt = "board";
-      img.src = this.renderer.canvas.toDataURL("image/png");
-      img.style.cssText = "position:absolute;left:0;right:0;top:48px;width:100%;height:auto;z-index:1;pointer-events:none";
-      this.renderer.canvas.insertAdjacentElement("afterend", img);
-      return;
-    }
-    const loop = () => {
-      paint();
+    const run = () => {
+      if (shot) {
+        this.renderer.forceSize(390, 640);
+        this.renderer.centerOn(this.units, this.map);
+        for (let i = 0; i < 8; i++) paint();
+        const img = document.createElement("img");
+        img.alt = "board";
+        img.src = this.renderer.canvas.toDataURL("image/png");
+        img.style.cssText = "position:absolute;left:0;right:0;top:48px;width:100%;height:auto;z-index:1;pointer-events:none";
+        this.renderer.canvas.insertAdjacentElement("afterend", img);
+        return;
+      }
+      const loop = () => {
+        paint();
+        requestAnimationFrame(loop);
+      };
       requestAnimationFrame(loop);
     };
-    requestAnimationFrame(loop);
+    void loadHd2dSprites().then(run, run);
   }
 
   applyHash(): void {

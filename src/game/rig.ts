@@ -1,4 +1,13 @@
+import {
+  SPRITE_H,
+  SPRITE_W,
+  canvasFromImageData,
+  frameImageData,
+  pngIdle,
+  type Face,
+} from "./sprites";
 import type { AnimClip, Archetype, Dir, Gender, Unit } from "./types";
+import { DIRS, yawDir } from "./types";
 
 export interface Proj {
   x: number;
@@ -8,72 +17,60 @@ export interface Proj {
 
 export type ProjectFn = (lx: number, ly: number, lz: number) => Proj;
 
-export const CHAR_H = 2.55;
+export const CHAR_H = 2.2;
 export const ATTACK_MS = 420;
 export const CAST_MS = 520;
 
-/** Voxel grid: ~14 wide, 10 deep, 20 tall. One cube = one pixel. */
-const VH = 20;
-const VOX_XY = 0.056;
-const VOX_Z = 1 / VH;
+type RGB = [number, number, number];
 
-interface RGB {
-  r: number;
-  g: number;
-  b: number;
+interface Pal {
+  skin: RGB;
+  skinDk: RGB;
+  hair: RGB;
+  hairLt: RGB;
+  shirt: RGB;
+  shirtDk: RGB;
+  pants: RGB;
+  accent: RGB;
+  extra: RGB;
+  metal: RGB;
+  shoe: RGB;
+  eye: RGB;
+  white: RGB;
+  outline: RGB;
 }
 
-const P = {
-  legL: 0,
-  legR: 1,
-  hip: 2,
-  torso: 3,
-  head: 4,
-  hair: 5,
-  armL: 6,
-  armR: 7,
-  gear: 8,
-  weap: 9,
-} as const;
-type Part = (typeof P)[keyof typeof P];
-
-interface Vox {
-  x: number;
-  y: number;
-  z: number;
-  p: Part;
-  ci: number;
+interface Pose {
+  bob: number;
+  lean: number;
+  legL: number;
+  legR: number;
+  liftL: number;
+  liftR: number;
+  armLx: number;
+  armLy: number;
+  armRx: number;
+  armRy: number;
+  weapX: number;
+  weapY: number;
+  spark: boolean;
+  flash: boolean;
 }
 
-interface Off {
-  x: number;
-  y: number;
-  z: number;
-}
-
-type Grid = Map<string, { p: Part; ci: number }>;
-
-const C_SKIN = 0;
-const C_HAIR = 1;
-const C_SHIRT = 2;
-const C_PANTS = 3;
-const C_ACCENT = 4;
-const C_EXTRA = 5;
-const C_METAL = 6;
-const C_SHOE = 7;
-const C_EYE = 8;
-const C_SPARK = 9;
+const OUT: RGB = [16, 12, 18];
+const WHITE: RGB = [246, 246, 250];
+const EYE: RGB = [22, 16, 18];
+const SHOE: RGB = [28, 24, 26];
 
 function rgb(r: number, g: number, b: number): RGB {
-  return { r, g, b };
+  return [r, g, b];
 }
 
-const EYE = rgb(22, 16, 18);
-const SHOE_DK = rgb(28, 24, 26);
+function shade(c: RGB, k: number): RGB {
+  return [Math.round(Math.min(255, c[0] * k)), Math.round(Math.min(255, c[1] * k)), Math.round(Math.min(255, c[2] * k))];
+}
 
-function palettes(arch: Archetype, gender: Gender): RGB[] {
-  const eye = EYE;
-  const shoe = SHOE_DK;
+function palettes(arch: Archetype, gender: Gender): Pal {
   let skin: RGB;
   let hair: RGB;
   let shirt: RGB;
@@ -84,34 +81,34 @@ function palettes(arch: Archetype, gender: Gender): RGB[] {
   switch (arch) {
     case "mara":
       skin = rgb(196, 154, 118);
-      hair = rgb(42, 32, 28);
-      shirt = rgb(28, 72, 78);
-      pants = rgb(22, 28, 36);
-      accent = rgb(62, 240, 208);
-      extra = rgb(18, 48, 56);
-      metal = rgb(180, 190, 200);
+      hair = rgb(36, 32, 40);
+      shirt = rgb(28, 48, 78);
+      pants = rgb(22, 28, 42);
+      accent = rgb(220, 190, 70);
+      extra = rgb(18, 28, 40);
+      metal = rgb(190, 196, 204);
       break;
     case "dana":
-      skin = rgb(168, 114, 82);
-      hair = rgb(28, 22, 20);
-      shirt = rgb(62, 78, 48);
-      pants = rgb(36, 32, 28);
-      accent = rgb(190, 210, 120);
-      extra = rgb(48, 58, 40);
-      metal = rgb(160, 150, 130);
+      skin = rgb(176, 124, 90);
+      hair = rgb(78, 48, 32);
+      shirt = rgb(32, 52, 72);
+      pants = rgb(28, 32, 40);
+      accent = rgb(220, 190, 70);
+      extra = rgb(22, 24, 28);
+      metal = rgb(170, 160, 140);
       break;
     case "priya":
       skin = rgb(150, 96, 64);
       hair = rgb(24, 16, 14);
-      shirt = rgb(232, 236, 240);
+      shirt = rgb(232, 228, 214);
       pants = rgb(40, 70, 78);
-      accent = rgb(40, 180, 150);
-      extra = rgb(200, 80, 80);
+      accent = rgb(200, 64, 64);
+      extra = rgb(90, 110, 64);
       metal = rgb(210, 214, 220);
       break;
     case "hale":
       skin = rgb(210, 170, 132);
-      hair = rgb(90, 78, 68);
+      hair = rgb(110, 96, 82);
       shirt = rgb(48, 52, 64);
       pants = rgb(32, 34, 42);
       accent = rgb(255, 200, 87);
@@ -148,11 +145,11 @@ function palettes(arch: Archetype, gender: Gender): RGB[] {
       } else {
         skin = rgb(186, 140, 104);
         hair = rgb(20, 18, 18);
-        shirt = rgb(44, 70, 48);
-        pants = rgb(28, 28, 32);
-        accent = rgb(180, 200, 80);
-        extra = rgb(36, 42, 36);
-        metal = rgb(150, 150, 155);
+        shirt = rgb(36, 32, 44);
+        pants = rgb(40, 40, 46);
+        accent = rgb(90, 60, 110);
+        extra = rgb(24, 22, 28);
+        metal = rgb(170, 174, 180);
       }
       break;
     case "magician":
@@ -240,22 +237,22 @@ function palettes(arch: Archetype, gender: Gender): RGB[] {
       metal = rgb(180, 170, 140);
       break;
   }
-  return [skin, hair, shirt, pants, accent, extra, metal, shoe, eye, accent];
-}
-
-const hexMemo = new Map<string, string>();
-
-function hex(c: RGB, shade = 1): string {
-  const k = Math.max(0.35, Math.min(1.28, shade));
-  const key = `${c.r},${c.g},${c.b}:${(k * 100) | 0}`;
-  const hit = hexMemo.get(key);
-  if (hit) return hit;
-  const r = Math.round(Math.min(255, c.r * k));
-  const g = Math.round(Math.min(255, c.g * k));
-  const b = Math.round(Math.min(255, c.b * k));
-  const s = `rgb(${r},${g},${b})`;
-  hexMemo.set(key, s);
-  return s;
+  return {
+    skin,
+    skinDk: shade(skin, 0.78),
+    hair,
+    hairLt: shade(hair, 1.35),
+    shirt,
+    shirtDk: shade(shirt, 0.72),
+    pants,
+    accent,
+    extra,
+    metal,
+    shoe: SHOE,
+    eye: EYE,
+    white: WHITE,
+    outline: OUT,
+  };
 }
 
 export function clipDuration(clip: AnimClip): number {
@@ -281,9 +278,84 @@ function poseId(u: Unit, now: number): string {
     const bob = Math.sin(now / 420 + u.x * 1.7) > 0 ? 1 : 0;
     return `i${bob}`;
   }
-  if (clip === "walk") return t < 0.5 ? "w0" : "w1";
+  if (clip === "walk") return `w${(t * 4) | 0}`;
   if (clip === "attack") return t < 0.35 ? "a0" : t < 0.62 ? "a1" : "a2";
-  return t < 0.55 ? "c1" : "c0";
+  if (t < 0.33) return "c0";
+  if (t < 0.66) return "c1";
+  return "c2";
+}
+
+function poseOf(id: string, face: Face): Pose {
+  const p: Pose = {
+    bob: 0,
+    lean: 0,
+    legL: 0,
+    legR: 0,
+    liftL: 0,
+    liftR: 0,
+    armLx: 0,
+    armLy: 0,
+    armRx: 0,
+    armRy: 0,
+    weapX: 0,
+    weapY: 0,
+    spark: false,
+    flash: false,
+  };
+  const toward = face === "right" ? 1 : face === "left" ? -1 : 0;
+  if (id === "i1") p.bob = 1;
+  if (id === "w0") {
+    p.bob = 1;
+    p.liftL = 3;
+    p.legL = toward || -1;
+    p.legR = toward ? -toward : 1;
+    p.armLx = 1;
+    p.armRx = -1;
+  } else if (id === "w1") {
+    p.legL = -1;
+    p.legR = 1;
+  } else if (id === "w2") {
+    p.bob = 1;
+    p.liftR = 3;
+    p.legR = toward || -1;
+    p.legL = toward ? -toward : 1;
+    p.armLx = -1;
+    p.armRx = 1;
+  } else if (id === "w3") {
+    p.legL = 1;
+    p.legR = -1;
+  } else if (id === "a0") {
+    p.lean = -toward || 0;
+    p.armRx = -(toward || 0);
+    p.armRy = -2;
+    p.weapX = -(toward || 0);
+    p.weapY = -2;
+  } else if (id === "a1") {
+    p.lean = toward || 0;
+    p.armRx = toward || 0;
+    p.armRy = 1;
+    p.weapX = (toward || 0) * 2 + (face === "down" || face === "up" ? 2 : 0);
+    p.weapY = 1;
+    p.flash = true;
+  } else if (id === "a2") {
+    p.armRy = -1;
+    p.weapY = -1;
+  } else if (id === "c0") {
+    p.bob = 1;
+    p.armLy = -3;
+    p.armRy = -3;
+  } else if (id === "c1") {
+    p.bob = 2;
+    p.armLy = -5;
+    p.armRy = -5;
+    p.spark = true;
+  } else if (id === "c2") {
+    p.bob = 1;
+    p.armLy = -4;
+    p.armRy = -4;
+    p.spark = true;
+  }
+  return p;
 }
 
 function rotFacing(x: number, y: number, dir: Dir): { x: number; y: number } {
@@ -303,630 +375,554 @@ export function localToGrid(lx: number, ly: number, dir: Dir): { x: number; y: n
   return rotFacing(lx, ly, dir);
 }
 
-function vk(x: number, y: number, z: number): string {
-  return `${x},${y},${z}`;
+export function screenFace(dir: Dir, yaw: number): Face {
+  const v = yawDir(DIRS[dir].x, DIRS[dir].y, yaw);
+  const sx = v.x - v.y;
+  const sy = v.x + v.y;
+  if (Math.abs(sy) >= Math.abs(sx)) return sy >= 0 ? "down" : "up";
+  return sx >= 0 ? "right" : "left";
 }
 
-function put(g: Grid, x: number, y: number, z: number, p: Part, ci: number): void {
-  g.set(vk(x, y, z), { p, ci });
-}
+class Pix {
+  readonly w = SPRITE_W;
+  readonly h = SPRITE_H;
+  readonly d = new Uint8ClampedArray(SPRITE_W * SPRITE_H * 4);
 
-function fill(g: Grid, x0: number, y0: number, z0: number, x1: number, y1: number, z1: number, p: Part, ci: number): void {
-  const xa = x0 < x1 ? x0 : x1;
-  const xb = x0 < x1 ? x1 : x0;
-  const ya = y0 < y1 ? y0 : y1;
-  const yb = y0 < y1 ? y1 : y0;
-  const za = z0 < z1 ? z0 : z1;
-  const zb = z0 < z1 ? z1 : z0;
-  for (let x = xa; x <= xb; x++) {
-    for (let y = ya; y <= yb; y++) {
-      for (let z = za; z <= zb; z++) put(g, x, y, z, p, ci);
+  put(x: number, y: number, c: RGB, a = 255): void {
+    if (x < 0 || y < 0 || x >= this.w || y >= this.h) return;
+    const i = (y * this.w + x) * 4;
+    this.d[i] = c[0];
+    this.d[i + 1] = c[1];
+    this.d[i + 2] = c[2];
+    this.d[i + 3] = a;
+  }
+
+  fill(x0: number, y0: number, x1: number, y1: number, c: RGB): void {
+    if (x0 > x1) [x0, x1] = [x1, x0];
+    if (y0 > y1) [y0, y1] = [y1, y0];
+    for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) this.put(x, y, c);
+  }
+
+  ellipse(cx: number, cy: number, rx: number, ry: number, c: RGB): void {
+    const rx2 = rx * rx;
+    const ry2 = ry * ry;
+    for (let y = -ry; y <= ry; y++) {
+      for (let x = -rx; x <= rx; x++) {
+        if (rx2 && ry2 && (x * x) / rx2 + (y * y) / ry2 <= 1.08) this.put(cx + x, cy + y, c);
+      }
     }
   }
-}
 
-function voxelize(g: Grid): Vox[] {
-  const out: Vox[] = [];
-  for (const [key, v] of g) {
-    const p1 = key.indexOf(",");
-    const p2 = key.indexOf(",", p1 + 1);
-    out.push({
-      x: Number(key.slice(0, p1)),
-      y: Number(key.slice(p1 + 1, p2)),
-      z: Number(key.slice(p2 + 1)),
-      p: v.p,
-      ci: v.ci,
-    });
-  }
-  return out;
-}
-
-function humanoid(g: Grid, woman: boolean, thick: boolean, squat: boolean): void {
-  const hipZ = squat ? 6 : 7;
-  const torsoZ = hipZ + 2;
-  const headZ = torsoZ + 5;
-  const hipW = woman ? 3 : 2;
-  const shW = thick ? 4 : woman ? 3 : 3;
-  const torsoW = woman ? 2 : 3;
-  const armX = shW + 1;
-  const armW = thick ? 2 : woman ? 0 : 1;
-  const legW = woman ? 1 : thick ? 2 : 1;
-
-  fill(g, -legW - 1, -1, 0, -1, 1, 1, P.legL, C_SHOE);
-  fill(g, 1, -1, 0, legW + 1, 1, 1, P.legR, C_SHOE);
-  fill(g, -legW - 1, -1, 2, -1, 1, hipZ - 1, P.legL, C_SKIN);
-  fill(g, 1, -1, 2, legW + 1, 1, hipZ - 1, P.legR, C_SKIN);
-
-  fill(g, -hipW, -1, hipZ, hipW, 1, hipZ + 1, P.hip, C_SKIN);
-  if (woman) {
-    fill(g, -torsoW, -1, torsoZ, torsoW, 1, torsoZ + 1, P.torso, C_SKIN);
-    fill(g, -shW, -1, torsoZ + 2, shW, 2, torsoZ + 4, P.torso, C_SKIN);
-    put(g, -1, 2, torsoZ + 3, P.torso, C_SKIN);
-    put(g, 0, 2, torsoZ + 3, P.torso, C_SKIN);
-    put(g, 1, 2, torsoZ + 3, P.torso, C_SKIN);
-  } else {
-    fill(g, -torsoW, -2, torsoZ, torsoW, 1, torsoZ + 4, P.torso, C_SKIN);
-    if (thick) fill(g, -shW, -2, torsoZ + 2, shW, 2, torsoZ + 4, P.torso, C_SKIN);
+  opaque(x: number, y: number): boolean {
+    if (x < 0 || y < 0 || x >= this.w || y >= this.h) return false;
+    return this.d[(y * this.w + x) * 4 + 3] > 10;
   }
 
-  fill(g, -1, -1, headZ - 1, 1, 1, headZ - 1, P.head, C_SKIN);
-  if (woman) fill(g, -2, -1, headZ, 1, 2, headZ + 3, P.head, C_SKIN);
-  else fill(g, -2, -2, headZ, 2, 2, headZ + 3, P.head, C_SKIN);
-  put(g, -1, 2, headZ + 1, P.head, C_EYE);
-  put(g, 1, 2, headZ + 1, P.head, C_EYE);
-  put(g, 0, 3, headZ + 1, P.head, C_SKIN);
-  put(g, 0, 2, headZ, P.head, C_SKIN);
+  outline(c: RGB): void {
+    const marks: Array<[number, number]> = [];
+    for (let y = 0; y < this.h; y++) {
+      for (let x = 0; x < this.w; x++) {
+        if (this.opaque(x, y)) continue;
+        if (this.opaque(x - 1, y) || this.opaque(x + 1, y) || this.opaque(x, y - 1) || this.opaque(x, y + 1)) {
+          marks.push([x, y]);
+        }
+      }
+    }
+    for (const [x, y] of marks) this.put(x, y, c);
+  }
 
-  const armTop = torsoZ + 4;
-  const armBot = squat ? hipZ + 1 : hipZ;
-  fill(g, -armX - armW, -1, armBot, -armX, 1, armTop, P.armL, C_SKIN);
-  fill(g, armX, -1, armBot, armX + armW, 1, armTop, P.armR, C_SKIN);
+  flipX(): void {
+    for (let y = 0; y < this.h; y++) {
+      for (let x = 0; x < this.w / 2; x++) {
+        const a = (y * this.w + x) * 4;
+        const b = (y * this.w + (this.w - 1 - x)) * 4;
+        for (let k = 0; k < 4; k++) {
+          const t = this.d[a + k];
+          this.d[a + k] = this.d[b + k];
+          this.d[b + k] = t;
+        }
+      }
+    }
+  }
+
+  canvas(): HTMLCanvasElement {
+    const c = document.createElement("canvas");
+    c.width = this.w;
+    c.height = this.h;
+    c.getContext("2d")!.putImageData(new ImageData(this.d, this.w, this.h), 0, 0);
+    return c;
+  }
 }
 
-function hairCap(g: Grid, style: "pony" | "short" | "long" | "bun" | "messy" | "sides" | "buzz" | "hood" | "mohawk"): void {
-  const top = 19;
-  if (style === "sides") {
-    fill(g, -2, -2, 16, -2, 2, 18, P.hair, C_HAIR);
-    fill(g, 2, -2, 16, 2, 2, 18, P.hair, C_HAIR);
-    fill(g, -2, -2, 18, 2, 2, 18, P.hair, C_HAIR);
+type Hair = "short" | "pony" | "bun" | "long" | "messy" | "sides" | "buzz" | "hood" | "mohawk" | "hat";
+
+function hairOf(arch: Archetype, gender: Gender): Hair {
+  switch (arch) {
+    case "mara":
+      return "short";
+    case "dana":
+      return "pony";
+    case "priya":
+      return "bun";
+    case "hale":
+      return "sides";
+    case "crosby":
+    case "beckett":
+      return "short";
+    case "delinquent":
+      return gender === "f" ? "messy" : "mohawk";
+    case "magician":
+      return gender === "f" ? "long" : "hood";
+    case "boxer":
+      return gender === "f" ? "short" : "buzz";
+    case "gunner":
+      return gender === "f" ? "short" : "buzz";
+    case "worker":
+      return "hat";
+    case "official":
+      return gender === "f" ? "bun" : "short";
+    case "wolverine":
+      return "messy";
+  }
+}
+
+function drawHair(p: Pix, pal: Pal, style: Hair, face: Face, hx: number, hy: number): void {
+  const back = face === "up";
+  if (style === "hood") {
+    p.fill(hx - 8, hy - 8, hx + 8, hy + 6, pal.extra);
+    p.fill(hx - 7, hy - 9, hx + 7, hy - 6, pal.shirt);
+    p.fill(hx - 8, hy - 4, hx - 6, hy + 5, pal.shirt);
+    p.fill(hx + 6, hy - 4, hx + 8, hy + 5, pal.shirt);
+    if (!back) p.fill(hx - 4, hy - 1, hx + 4, hy + 5, pal.skin);
+    else p.fill(hx - 5, hy - 2, hx + 5, hy + 3, pal.extra);
+    return;
+  }
+  if (style === "hat") {
+    p.fill(hx - 8, hy - 6, hx + 8, hy - 4, pal.metal);
+    p.fill(hx - 6, hy - 10, hx + 6, hy - 5, pal.metal);
+    p.fill(hx - 5, hy - 9, hx + 5, hy - 8, pal.accent);
+    p.fill(hx - 6, hy - 5, hx + 6, hy - 4, pal.shirtDk);
     return;
   }
   if (style === "buzz") {
-    fill(g, -2, -2, 18, 2, 2, 18, P.hair, C_HAIR);
+    p.fill(hx - 6, hy - 8, hx + 6, hy - 5, pal.hair);
+    p.fill(hx - 7, hy - 6, hx + 7, hy - 5, pal.hair);
+    return;
+  }
+  if (style === "sides") {
+    p.fill(hx - 7, hy - 4, hx - 5, hy + 4, pal.hair);
+    p.fill(hx + 5, hy - 4, hx + 7, hy + 4, pal.hair);
+    p.fill(hx - 5, hy - 8, hx + 5, hy - 6, pal.hair);
+    p.put(hx, hy - 7, pal.hairLt);
     return;
   }
   if (style === "mohawk") {
-    fill(g, 0, -2, 18, 0, 2, top, P.hair, C_HAIR);
-    fill(g, -1, -1, 18, 1, 1, 18, P.hair, C_HAIR);
+    p.fill(hx - 1, hy - 12, hx + 1, hy - 5, pal.hair);
+    p.put(hx, hy - 13, pal.hairLt);
+    p.fill(hx - 6, hy - 4, hx - 5, hy + 3, pal.hair);
+    p.fill(hx + 5, hy - 4, hx + 6, hy + 3, pal.hair);
+    p.fill(hx - 4, hy - 8, hx + 4, hy - 6, pal.hair);
     return;
   }
-  fill(g, -2, -2, 17, 2, 2, top, P.hair, C_HAIR);
-  fill(g, -2, -2, 16, 2, -2, 18, P.hair, C_HAIR);
-  if (style === "pony") {
-    fill(g, 2, -2, 14, 3, -1, 18, P.hair, C_HAIR);
-    fill(g, 3, -2, 12, 3, -1, 15, P.hair, C_HAIR);
-  } else if (style === "long") {
-    fill(g, -2, -3, 12, 2, -2, 18, P.hair, C_HAIR);
-    fill(g, -2, -3, 10, 2, -2, 12, P.hair, C_HAIR);
-  } else if (style === "bun") {
-    fill(g, -1, -3, 18, 1, -2, top, P.hair, C_HAIR);
-  } else if (style === "messy") {
-    put(g, -3, 0, 18, P.hair, C_HAIR);
-    put(g, 3, 1, 19, P.hair, C_HAIR);
-    put(g, 0, -3, 19, P.hair, C_HAIR);
-    fill(g, -2, 2, 17, 2, 2, 18, P.hair, C_HAIR);
-  } else if (style === "hood") {
-    fill(g, -3, -2, 16, 3, 2, top, P.hair, C_HAIR);
-    fill(g, -3, 2, 14, 3, 3, 18, P.hair, C_HAIR);
-    fill(g, -3, -3, 14, 3, -2, 18, P.hair, C_HAIR);
-  }
-}
 
-function clothesPants(g: Grid, woman: boolean, squat: boolean): void {
-  const hipZ = squat ? 6 : 7;
-  const hipW = woman ? 3 : 2;
-  fill(g, -hipW, -1, hipZ, hipW, 1, hipZ + 1, P.hip, C_PANTS);
-  fill(g, woman ? -2 : -2, -1, 2, -1, 1, hipZ - 1, P.legL, C_PANTS);
-  fill(g, 1, -1, 2, woman ? 2 : 2, 1, hipZ - 1, P.legR, C_PANTS);
-}
+  p.fill(hx - 7, hy - 8, hx + 7, hy - 3, pal.hair);
+  p.fill(hx - 6, hy - 10, hx + 6, hy - 7, pal.hair);
+  p.put(hx - 2, hy - 11, pal.hairLt);
+  p.put(hx + 2, hy - 10, pal.hairLt);
 
-function clothesShirt(g: Grid, woman: boolean, thick: boolean): void {
-  const hipZ = 7;
-  const torsoZ = hipZ + 2;
-  const shW = thick ? 4 : woman ? 3 : 3;
-  const torsoW = woman ? 2 : 3;
-  if (woman) {
-    fill(g, -torsoW, -1, torsoZ, torsoW, 1, torsoZ + 1, P.torso, C_SHIRT);
-    fill(g, -shW, -1, torsoZ + 2, shW, 2, torsoZ + 4, P.torso, C_SHIRT);
-  } else {
-    fill(g, -torsoW, -2, torsoZ, torsoW, 1, torsoZ + 4, P.torso, C_SHIRT);
-    if (thick) fill(g, -shW, -2, torsoZ + 2, shW, 1, torsoZ + 4, P.torso, C_SHIRT);
-  }
-  fill(g, woman ? -3 : -3, -1, torsoZ - 1, woman ? 3 : 3, 1, torsoZ - 1, P.hip, C_EXTRA);
-}
-
-function jacket(g: Grid, ci: number, long: boolean): void {
-  fill(g, -3, -2, 9, 3, 2, 13, P.torso, ci);
-  fill(g, -3, -2, 14, 3, 1, 14, P.torso, ci);
-  if (long) fill(g, -3, -3, 4, 3, -2, 12, P.torso, ci);
-}
-
-function baton(g: Grid): void {
-  fill(g, 5, 2, 8, 5, 5, 8, P.weap, C_METAL);
-  put(g, 5, 2, 8, P.weap, C_EXTRA);
-}
-
-function knife(g: Grid): void {
-  fill(g, 5, 1, 8, 5, 4, 8, P.weap, C_METAL);
-  put(g, 5, 1, 8, P.weap, C_EXTRA);
-}
-
-function rifle(g: Grid): void {
-  fill(g, 4, 1, 11, 5, 6, 12, P.weap, C_METAL);
-  put(g, 5, 6, 12, P.weap, C_EXTRA);
-  put(g, 4, 2, 10, P.weap, C_METAL);
-}
-
-function gloves(g: Grid, thick: boolean): void {
-  const s = thick ? 2 : 1;
-  fill(g, -6 - (thick ? 1 : 0), -1, 7, -5, 1 + s - 1, 9, P.armL, C_EXTRA);
-  fill(g, 5, -1, 7, 6 + (thick ? 1 : 0), 1 + s - 1, 9, P.armR, C_EXTRA);
-}
-
-function beast(g: Grid, woman: boolean): void {
-  const w = woman ? 1 : 2;
-  fill(g, -w, -3, 4, w, 3, 8, P.torso, C_SHIRT);
-  fill(g, -w, -2, 8, w, 2, 9, P.torso, C_SHIRT);
-  fill(g, -w, 2, 6, w, 5, 10, P.head, C_SKIN);
-  fill(g, -1, 5, 6, 1, 7, 8, P.head, C_SKIN);
-  put(g, -1, 7, 8, P.head, C_EYE);
-  put(g, 1, 7, 8, P.head, C_EYE);
-  put(g, 0, 7, 6, P.head, C_SHOE);
-  put(g, -2, 3, 11, P.hair, C_HAIR);
-  put(g, 2, 3, 11, P.hair, C_HAIR);
-  fill(g, -2, 3, 10, -2, 4, 11, P.hair, C_HAIR);
-  fill(g, 2, 3, 10, 2, 4, 11, P.hair, C_HAIR);
-  fill(g, -1, -6, 6, 1, -4, 7, P.gear, C_HAIR);
-  put(g, 0, -6, 5, P.gear, C_HAIR);
-  fill(g, -3, -3, 0, -2, -1, 5, P.legL, C_PANTS);
-  fill(g, 2, -3, 0, 3, -1, 5, P.legR, C_PANTS);
-  fill(g, -3, -3, 0, -2, -1, 1, P.legL, C_SHOE);
-  fill(g, 2, -3, 0, 3, -1, 1, P.legR, C_SHOE);
-  fill(g, -3, 2, 0, -2, 4, 6, P.armL, C_SKIN);
-  fill(g, 2, 2, 0, 3, 4, 6, P.armR, C_SKIN);
-  fill(g, -3, 4, 0, -2, 6, 1, P.weap, C_METAL);
-  fill(g, 2, 4, 0, 3, 6, 1, P.weap, C_METAL);
-  put(g, -3, 6, 0, P.weap, C_METAL);
-  put(g, 3, 6, 0, P.weap, C_METAL);
-  fill(g, -2, -1, 3, 2, 1, 4, P.hip, C_PANTS);
-}
-
-function buildModel(arch: Archetype, gender: Gender): Vox[] {
-  const g: Grid = new Map();
-  const woman = gender === "f";
-  if (arch === "wolverine") {
-    beast(g, woman);
-    return voxelize(g);
-  }
-  const thick = arch === "boxer" || arch === "crosby" || arch === "beckett";
-  const squat = false;
-  humanoid(g, woman, thick, squat);
-  clothesPants(g, woman, squat);
-  clothesShirt(g, woman, thick);
-
-  switch (arch) {
-    case "mara":
-      jacket(g, C_EXTRA, false);
-      fill(g, -3, 1, 11, 3, 2, 13, P.torso, C_ACCENT);
-      hairCap(g, "pony");
-      baton(g);
-      put(g, 0, 2, 12, P.gear, C_METAL);
-      break;
-    case "dana":
-      jacket(g, C_EXTRA, false);
-      hairCap(g, "short");
-      baton(g);
-      fill(g, -4, 1, 13, -3, 2, 14, P.gear, C_METAL);
-      put(g, -4, 2, 14, P.gear, C_ACCENT);
-      break;
-    case "priya":
-      hairCap(g, "long");
-      fill(g, -4, -1, 7, -3, 1, 10, P.gear, C_EXTRA);
-      put(g, -3, 1, 9, P.gear, C_ACCENT);
-      put(g, -4, 0, 8, P.gear, C_SHIRT);
-      put(g, 0, 2, 12, P.torso, C_EXTRA);
-      put(g, 0, 2, 11, P.torso, C_EXTRA);
-      put(g, -1, 2, 12, P.torso, C_EXTRA);
-      put(g, 1, 2, 12, P.torso, C_EXTRA);
-      break;
-    case "hale":
-      hairCap(g, "sides");
-      jacket(g, C_EXTRA, false);
-      fill(g, 0, 2, 10, 0, 2, 12, P.gear, C_ACCENT);
-      put(g, 0, 2, 16, P.head, C_HAIR);
-      put(g, -1, 2, 16, P.head, C_HAIR);
-      put(g, 1, 2, 16, P.head, C_HAIR);
-      break;
-    case "crosby":
-      jacket(g, C_EXTRA, true);
-      hairCap(g, "short");
-      rifle(g);
-      put(g, -2, 2, 11, P.gear, C_ACCENT);
-      put(g, 2, 2, 11, P.gear, C_ACCENT);
-      fill(g, -3, -3, 13, 3, -2, 18, P.torso, C_EXTRA);
-      break;
-    case "beckett":
-      jacket(g, C_EXTRA, true);
-      hairCap(g, "short");
-      rifle(g);
-      fill(g, -3, 2, 10, 3, 2, 11, P.torso, C_ACCENT);
-      break;
-    case "delinquent":
-      hairCap(g, woman ? "messy" : "mohawk");
-      fill(g, -3, -2, 8, 3, 2, 13, P.torso, C_SHIRT);
-      fill(g, -3, -2, 14, 3, 2, 15, P.hair, C_SHIRT);
-      if (woman) fill(g, -2, -2, 16, 2, 2, 18, P.hair, C_HAIR);
-      knife(g);
-      break;
-    case "magician":
-      for (let z = 1; z <= 12; z++) {
-        const w = z < 5 ? 4 : z < 9 ? 3 : 2;
-        fill(g, -w, -2, z, w, 2, z, P.torso, z < 8 ? C_PANTS : C_SHIRT);
-      }
-      fill(g, -3, -3, 8, 3, 2, 14, P.torso, C_SHIRT);
-      hairCap(g, woman ? "long" : "hood");
-      if (!woman) fill(g, -3, -2, 16, 3, 2, 19, P.hair, C_EXTRA);
-      fill(g, -1, 2, 12, 1, 3, 13, P.gear, C_ACCENT);
-      put(g, 0, 3, 14, P.gear, C_SPARK);
-      break;
-    case "boxer":
-      hairCap(g, woman ? "short" : "buzz");
-      gloves(g, true);
-      fill(g, -2, -1, 9, 2, 1, 12, P.torso, C_SHIRT);
-      fill(g, -3, -1, 2, 3, 1, 6, P.hip, C_PANTS);
-      put(g, 0, 2, 10, P.torso, C_ACCENT);
-      break;
-    case "gunner":
-      hairCap(g, woman ? "short" : "buzz");
-      rifle(g);
-      fill(g, -3, -1, 9, 3, 2, 13, P.torso, C_EXTRA);
-      put(g, 0, 2, 12, P.gear, C_ACCENT);
-      fill(g, 4, 0, 10, 5, 1, 13, P.armR, C_SKIN);
-      break;
-    case "worker":
-      hairCap(g, "short");
-      fill(g, -3, -2, 18, 3, 2, 19, P.hair, C_METAL);
-      fill(g, -4, -3, 18, 4, 3, 18, P.hair, C_METAL);
-      fill(g, -3, -2, 9, 3, 2, 13, P.torso, C_SHIRT);
-      put(g, 0, 2, 11, P.gear, C_ACCENT);
-      fill(g, -3, -1, 8, 3, 1, 8, P.torso, C_EXTRA);
-      break;
-    case "official":
-      hairCap(g, woman ? "bun" : "short");
-      jacket(g, C_EXTRA, true);
-      fill(g, 0, 2, 9, 0, 2, 13, P.gear, C_ACCENT);
-      fill(g, -3, -2, 9, 3, 1, 13, P.torso, C_SHIRT);
-      break;
-  }
-  return voxelize(g);
-}
-
-const modelCache = new Map<string, Vox[]>();
-
-function modelOf(arch: Archetype, gender: Gender): Vox[] {
-  const key = arch + gender;
-  let m = modelCache.get(key);
-  if (!m) {
-    m = buildModel(arch, gender);
-    modelCache.set(key, m);
-  }
-  return m;
-}
-
-function offsetsFor(arch: Archetype, pose: string): Off[] {
-  const o: Off[] = [];
-  for (let i = 0; i < 10; i++) o.push({ x: 0, y: 0, z: 0 });
-  const set = (parts: Part[], x: number, y: number, z: number) => {
-    for (const p of parts) {
-      o[p].x += x;
-      o[p].y += y;
-      o[p].z += z;
-    }
-  };
-  const upper: Part[] = [P.torso, P.head, P.hair, P.armL, P.armR, P.gear, P.weap];
-  if (pose === "i1") {
-    set(upper, 0, 0, 1);
-    return o;
-  }
-  if (pose === "w0" || pose === "w1") {
-    const a = pose === "w0";
-    set([P.hip, P.torso, P.head, P.hair, P.gear], 0, 0, 1);
-    o[P.legL].y = a ? 2 : -2;
-    o[P.legL].z = a ? 1 : 0;
-    o[P.legR].y = a ? -2 : 2;
-    o[P.legR].z = a ? 0 : 1;
-    o[P.armL].y = a ? -1 : 1;
-    o[P.armR].y = a ? 1 : -1;
-    o[P.weap].y = o[P.armR].y;
-    return o;
-  }
-  if (pose[0] === "a") {
-    const phase = pose === "a0" ? 0 : pose === "a1" ? 1 : 2;
-    if (arch === "wolverine") {
-      set([P.torso, P.head, P.hair], 0, phase === 1 ? 2 : 1, 0);
-      set([P.armL, P.armR, P.weap], 0, phase === 1 ? 4 : 2, 0);
-      o[P.legL].y = phase === 1 ? -1 : 0;
-      o[P.legR].y = phase === 1 ? 2 : 0;
-    } else if (arch === "boxer") {
-      o[P.armR].y = phase === 0 ? -1 : phase === 1 ? 4 : 1;
-      o[P.armR].z = phase === 1 ? 1 : 0;
-      o[P.torso].y = phase === 1 ? 1 : 0;
-      o[P.armL].y = -1;
-      o[P.armL].z = 1;
-    } else if (arch === "gunner" || arch === "crosby" || arch === "beckett") {
-      o[P.armR].y = 2;
-      o[P.armR].z = 1;
-      o[P.weap].y = 2;
-      o[P.torso].y = 1;
-      o[P.armL].y = 1;
+  if (style === "short") {
+    p.fill(hx - 7, hy - 3, hx + 7, hy + 1, pal.hair);
+    if (face === "down") {
+      p.fill(hx - 6, hy - 2, hx + 6, hy + 1, pal.hair);
+      p.fill(hx - 5, hy + 1, hx - 2, hy + 2, pal.hair);
+      p.fill(hx + 1, hy + 1, hx + 4, hy + 2, pal.hair);
+    } else if (back) {
+      p.fill(hx - 7, hy - 2, hx + 7, hy + 4, pal.hair);
     } else {
-      o[P.armR].y = phase === 0 ? -1 : phase === 1 ? 3 : 1;
-      o[P.weap].y = o[P.armR].y + (phase === 1 ? 2 : 0);
-      o[P.torso].y = phase === 1 ? 1 : 0;
-      o[P.armL].y = -1;
+      p.fill(hx - 7, hy - 3, hx + 3, hy + 2, pal.hair);
     }
-    return o;
+  } else if (style === "pony") {
+    p.fill(hx - 6, hy - 2, hx + 6, hy + 1, pal.hair);
+    const px = face === "right" ? hx - 7 : hx + 5;
+    if (back) {
+      p.fill(hx, hy, hx + 4, hy + 14, pal.hair);
+      p.fill(hx + 1, hy + 12, hx + 4, hy + 18, pal.hair);
+    } else {
+      p.fill(px, hy - 1, px + 3, hy + 12, pal.hair);
+      p.fill(px + 1, hy + 10, px + 3, hy + 16, pal.hair);
+      p.put(px + 2, hy + 6, pal.hairLt);
+    }
+  } else if (style === "bun") {
+    p.fill(hx - 6, hy - 3, hx + 6, hy, pal.hair);
+    const bx = back ? hx : face === "right" ? hx - 4 : face === "left" ? hx + 4 : hx;
+    p.fill(bx - 3, hy - 12, bx + 3, hy - 8, pal.hair);
+    p.fill(bx - 2, hy - 13, bx + 2, hy - 11, pal.hairLt);
+    if (face === "down") {
+      p.fill(hx - 5, hy - 1, hx - 2, hy + 1, pal.hair);
+      p.fill(hx + 2, hy - 1, hx + 5, hy + 1, pal.hair);
+    }
+  } else if (style === "long") {
+    p.fill(hx - 7, hy - 2, hx + 7, hy + 12, pal.hair);
+    p.fill(hx - 6, hy + 10, hx + 6, hy + 16, pal.hair);
+    p.put(hx - 4, hy + 4, pal.hairLt);
+  } else if (style === "messy") {
+    p.put(hx - 8, hy - 7, pal.hair);
+    p.put(hx + 8, hy - 8, pal.hair);
+    p.put(hx - 1, hy - 12, pal.hairLt);
+    p.put(hx + 3, hy - 11, pal.hair);
+    p.fill(hx - 7, hy - 2, hx + 7, hy + 3, pal.hair);
+    p.fill(hx - 8, hy + 1, hx - 6, hy + 6, pal.hair);
   }
-  if (pose[0] === "c") {
-    const up = pose === "c1";
-    set([P.armL, P.armR, P.weap], 0, 1, up ? 4 : 2);
-    set([P.head, P.hair, P.torso], 0, 0, 1);
-  }
-  return o;
 }
 
-function extras(arch: Archetype, pose: string): Vox[] {
-  const out: Vox[] = [];
-  if (pose === "c1") {
-    out.push(
-      { x: -4, y: 2, z: 18, p: P.gear, ci: C_SPARK },
-      { x: 4, y: 2, z: 18, p: P.gear, ci: C_SPARK },
-      { x: -5, y: 3, z: 19, p: P.gear, ci: C_ACCENT },
-      { x: 5, y: 3, z: 19, p: P.gear, ci: C_ACCENT },
-      { x: 0, y: 3, z: 20, p: P.gear, ci: C_SPARK },
-    );
+function drawFace(p: Pix, pal: Pal, face: Face, hx: number, hy: number, woman: boolean): void {
+  if (face === "up") return;
+  if (face === "down") {
+    p.fill(hx - 4, hy, hx - 3, hy + 1, pal.eye);
+    p.fill(hx + 2, hy, hx + 3, hy + 1, pal.eye);
+    p.put(hx - 4, hy, pal.white);
+    p.put(hx + 2, hy, pal.white);
+    p.put(hx - 1, hy + 3, pal.skinDk);
+    p.put(hx, hy + 3, pal.skinDk);
+    if (woman) {
+      p.put(hx - 5, hy + 2, shade(pal.skin, 0.88));
+      p.put(hx + 4, hy + 2, shade(pal.skin, 0.88));
+    }
+  } else if (face === "right") {
+    p.fill(hx + 3, hy, hx + 4, hy + 1, pal.eye);
+    p.put(hx + 3, hy, pal.white);
+    p.put(hx + 5, hy + 2, pal.skinDk);
+    p.put(hx + 4, hy + 3, pal.skinDk);
+  } else {
+    p.fill(hx - 5, hy, hx - 4, hy + 1, pal.eye);
+    p.put(hx - 5, hy, pal.white);
+    p.put(hx - 6, hy + 2, pal.skinDk);
   }
-  if (pose === "a1" && (arch === "gunner" || arch === "crosby" || arch === "beckett")) {
-    out.push({ x: 5, y: 7, z: 12, p: P.weap, ci: C_SPARK }, { x: 5, y: 8, z: 12, p: P.weap, ci: C_ACCENT });
+}
+
+function drawHuman(p: Pix, pal: Pal, arch: Archetype, gender: Gender, face: Face, pose: Pose): void {
+  const woman = gender === "f";
+  const thick = arch === "boxer" || arch === "crosby" || arch === "beckett";
+  const hx = 16 + pose.lean;
+  const hy = 13 - pose.bob;
+  const ty = 23 - pose.bob;
+  const hair = hairOf(arch, gender);
+  const back = face === "up";
+  const side = face === "left" || face === "right";
+  const tw = thick ? 5 : woman ? 4 : 5;
+
+  const l0 = 32 - pose.liftL;
+  const r0 = 32 - pose.liftR;
+  p.fill(11 + pose.legL, l0, 14 + pose.legL, 44 - pose.liftL, pal.pants);
+  p.fill(17 + pose.legR, r0, 20 + pose.legR, 44 - pose.liftR, pal.pants);
+  p.fill(10 + pose.legL, 44 - pose.liftL, 15 + pose.legL, 46 - pose.liftL, pal.shoe);
+  p.fill(16 + pose.legR, 44 - pose.liftR, 21 + pose.legR, 46 - pose.liftR, pal.shoe);
+  if (arch === "priya") {
+    p.fill(10 + pose.legL, l0, 21 + pose.legR, 42, pal.shirt);
+    p.fill(10, 40, 21, 42, pal.accent);
+    p.fill(10 + pose.legL, 44 - pose.liftL, 15 + pose.legL, 46 - pose.liftL, pal.extra);
+    p.fill(16 + pose.legR, 44 - pose.liftR, 21 + pose.legR, 46 - pose.liftR, pal.extra);
+  }
+
+  p.fill(hx - tw, ty, hx + tw, ty + 8, pal.shirt);
+  p.fill(hx - tw + 1, ty - 1, hx + tw - 1, ty, pal.shirt);
+  p.fill(hx - tw, ty + 7, hx + tw, ty + 8, pal.extra);
+
+  if (arch === "mara" || arch === "dana") {
+    p.fill(hx - tw, ty, hx + tw, ty + 8, pal.shirt);
+    p.fill(hx - 3, ty + 7, hx + 3, ty + 8, pal.shoe);
+    p.put(hx + (back ? -1 : 2), ty + 3, pal.accent);
+    p.put(hx - tw + 1, ty + 2, pal.accent);
+    p.put(hx + tw - 1, ty + 2, pal.accent);
+  }
+  if (arch === "priya") {
+    p.fill(hx - tw - 1, ty, hx + tw + 1, ty + 6, pal.extra);
+    p.fill(hx - tw + 1, ty + 1, hx + tw - 1, ty + 7, pal.shirt);
+  }
+  if (arch === "official") {
+    p.fill(hx - tw - 1, ty, hx + tw + 1, ty + 9, pal.extra);
+    p.fill(hx - 2, ty + 1, hx + 2, ty + 7, pal.shirt);
+    p.fill(hx - 1, ty + 1, hx + 1, ty + 6, pal.accent);
+  }
+  if (arch === "crosby" || arch === "beckett") {
+    p.fill(hx - tw - 1, ty - 1, hx + tw + 1, ty + 11, pal.extra);
+    p.fill(hx - 2, ty + 2, hx + 2, ty + 3, pal.accent);
+    p.put(hx - 3, ty + 4, pal.metal);
+    p.put(hx + 3, ty + 4, pal.metal);
+  }
+  if (arch === "worker") {
+    p.fill(hx - tw, ty + 6, hx + tw, ty + 7, pal.extra);
+    p.put(hx, ty + 3, pal.accent);
+  }
+  if (arch === "boxer") {
+    p.fill(hx - 3, ty, hx + 3, ty + 6, pal.shirt);
+    p.fill(hx - 4, ty + 6, hx + 4, ty + 8, pal.pants);
+  }
+  if (arch === "magician") {
+    p.fill(hx - tw - 2, ty + 1, hx + tw + 2, ty + 13, pal.shirt);
+    p.fill(hx - tw, ty, hx + tw, ty + 7, pal.shirtDk);
+    p.fill(hx - 2, ty + 2, hx + 2, ty + 4, pal.accent);
+  }
+  if (arch === "delinquent") {
+    p.fill(hx - tw - 1, ty - 1, hx + tw + 1, ty + 8, pal.extra);
+    p.fill(hx - 3, ty + 2, hx + 3, ty + 6, pal.accent);
+  }
+  if (arch === "gunner") {
+    p.fill(hx - tw, ty, hx + tw, ty + 8, pal.extra);
+    p.put(hx, ty + 3, pal.accent);
+    p.fill(hx - 3, ty + 7, hx + 3, ty + 8, pal.metal);
+  }
+  if (arch === "hale") {
+    p.fill(hx - 1, ty + 1, hx + 1, ty + 6, pal.accent);
+  }
+
+  const farArm = arch === "boxer" ? pal.extra : pal.shirt;
+  if (!side) {
+    p.fill(hx - tw - 2 + pose.armLx, ty + 1 + pose.armLy, hx - tw - 1 + pose.armLx, ty + 8 + pose.armLy, farArm);
+    p.fill(hx - tw - 2 + pose.armLx, ty + 8 + pose.armLy, hx - tw - 1 + pose.armLx, ty + 9 + pose.armLy, pal.skin);
+    p.fill(hx + tw + 1 + pose.armRx, ty + 1 + pose.armRy, hx + tw + 2 + pose.armRx, ty + 8 + pose.armRy, farArm);
+    p.fill(hx + tw + 1 + pose.armRx, ty + 8 + pose.armRy, hx + tw + 2 + pose.armRx, ty + 9 + pose.armRy, pal.skin);
+  } else if (face === "right") {
+    p.fill(hx + tw + pose.armRx, ty + 1 + pose.armRy, hx + tw + 2 + pose.armRx, ty + 8 + pose.armRy, farArm);
+    p.fill(hx + tw + 1 + pose.armRx, ty + 8 + pose.armRy, hx + tw + 2 + pose.armRx, ty + 9 + pose.armRy, pal.skin);
+  } else {
+    p.fill(hx - tw - 2 + pose.armLx, ty + 1 + pose.armLy, hx - tw + pose.armLx, ty + 8 + pose.armLy, farArm);
+    p.fill(hx - tw - 2 + pose.armLx, ty + 8 + pose.armLy, hx - tw - 1 + pose.armLx, ty + 9 + pose.armLy, pal.skin);
+  }
+
+  if (arch === "boxer") {
+    const gx = face === "right" ? hx + tw + 4 + pose.armRx : face === "left" ? hx - tw - 4 + pose.armLx : hx + tw + 3 + pose.armRx;
+    const gy = ty + 8 + pose.armRy;
+    p.fill(gx - 2, gy - 2, gx + 2, gy + 2, pal.extra);
+    p.fill(gx - 1, gy - 1, gx + 1, gy + 1, pal.accent);
+    if (!side) p.fill(hx - tw - 4 + pose.armLx, ty + 7 + pose.armLy, hx - tw - 1 + pose.armLx, ty + 10 + pose.armLy, pal.extra);
+  }
+
+  p.fill(hx - 6, hy - 4, hx + 6, hy + 5, pal.skin);
+  p.fill(hx - 5, hy - 6, hx + 5, hy - 4, pal.skin);
+  p.fill(hx - 5, hy + 5, hx + 5, hy + 6, pal.skin);
+  p.fill(hx - 2, hy + 6, hx + 2, hy + 8, pal.skin);
+  if (back) {
+    p.fill(hx - 6, hy - 4, hx + 6, hy + 5, pal.skinDk);
+  } else {
+    p.fill(hx - 3, hy + 4, hx + 3, hy + 5, pal.skinDk);
+  }
+  drawHair(p, pal, hair, face, hx, hy);
+  drawFace(p, pal, face, hx, hy, woman);
+
+  if (arch === "priya") {
+    const bx = face === "right" ? hx + 5 : hx - 9;
+    p.fill(bx, ty + 3, bx + 5, ty + 8, pal.accent);
+    p.fill(bx + 1, ty + 5, bx + 4, ty + 6, pal.white);
+    p.put(bx + 2, ty + 4, pal.white);
+    p.put(bx + 2, ty + 7, pal.white);
+  }
+  if (arch === "dana") {
+    const rx = face === "right" ? hx + 6 : face === "left" ? hx - 7 : hx + 5;
+    p.fill(rx, hy + 7, rx + 1, hy + 11, pal.shoe);
+    p.put(rx, hy + 6, pal.metal);
+  }
+
+  drawWeapon(p, pal, arch, face, hx, ty, pose);
+  if (pose.spark) drawSpark(p, pal, hx, hy - 8);
+}
+
+function drawWeapon(p: Pix, pal: Pal, arch: Archetype, face: Face, hx: number, ty: number, pose: Pose): void {
+  const dir = face === "left" ? -1 : 1;
+  const wx = hx + (face === "up" ? 5 : 6 * dir) + pose.weapX;
+  const wy = ty + 3 + pose.weapY;
+  if (arch === "mara" || arch === "dana") {
+    if (face === "up") p.fill(hx + 5, ty + 2, hx + 6, ty + 11, pal.metal);
+    else p.fill(wx, wy, wx + 5 * dir, wy + 1, pal.metal);
+    p.put(wx, wy, pal.extra);
+  } else if (arch === "delinquent") {
+    if (face === "up") p.fill(hx + 6, ty - 4, hx + 7, ty + 8, pal.metal);
+    else {
+      p.fill(wx, wy - 8, wx + dir, wy + 2, pal.metal);
+      p.put(wx, wy - 8, pal.white);
+    }
+  } else if (arch === "gunner" || arch === "crosby" || arch === "beckett") {
+    const gx = hx + (face === "up" ? 4 : 5 * dir) + pose.weapX;
+    const gy = ty + 4 + pose.weapY;
+    p.fill(gx, gy, gx + 6 * dir, gy + 1, pal.metal);
+    p.fill(gx + dir, gy - 1, gx + 2 * dir, gy, pal.metal);
+    if (pose.flash) {
+      p.put(gx + 7 * dir, gy, pal.accent);
+      p.put(gx + 8 * dir, gy - 1, pal.white);
+      p.put(gx + 7 * dir, gy + 1, pal.white);
+    }
+  } else if (arch === "magician") {
+    p.fill(hx + 3 * dir, ty - 6 + pose.weapY, hx + 4 * dir, ty + 6, pal.metal);
+    p.put(hx + 3 * dir, ty - 7 + pose.weapY, pal.accent);
+  }
+}
+
+function drawSpark(p: Pix, pal: Pal, x: number, y: number): void {
+  p.put(x, y, pal.accent);
+  p.put(x - 3, y + 2, pal.accent);
+  p.put(x + 3, y + 1, pal.white);
+  p.put(x - 2, y - 2, pal.white);
+  p.put(x + 2, y - 1, pal.accent);
+  p.put(x + 1, y + 3, pal.metal);
+  p.put(x - 4, y - 1, pal.white);
+}
+
+function drawBeast(p: Pix, pal: Pal, face: Face, pose: Pose): void {
+  const hx = 16 + pose.lean;
+  const by = 26 - pose.bob;
+  p.fill(hx - 6, by, hx + 6, by + 10, pal.shirt);
+  p.fill(hx - 4, by - 2, hx + 4, by, pal.shirtDk);
+  p.fill(9 + pose.legL, 36 - pose.liftL, 13 + pose.legL, 45 - pose.liftL, pal.pants);
+  p.fill(18 + pose.legR, 36 - pose.liftR, 22 + pose.legR, 45 - pose.liftR, pal.pants);
+  p.fill(8 + pose.legL, 45 - pose.liftL, 14 + pose.legL, 46 - pose.liftL, pal.shoe);
+  p.fill(17 + pose.legR, 45 - pose.liftR, 23 + pose.legR, 46 - pose.liftR, pal.shoe);
+  p.fill(hx - 8, 30, hx - 6, 40, pal.skin);
+  p.fill(hx + 6, 30, hx + 8, 40, pal.skin);
+  p.fill(hx - 10 + pose.weapX, 39, hx - 7 + pose.weapX, 41, pal.metal);
+  p.fill(hx + 7 + pose.weapX, 39, hx + 10 + pose.weapX, 41, pal.metal);
+  p.fill(hx - 2, 22, hx + 2, 28, pal.extra);
+  const hy = 15 - pose.bob;
+  p.fill(hx - 6, hy - 4, hx + 6, hy + 5, pal.shirt);
+  p.fill(hx - 5, hy - 8, hx - 3, hy - 5, pal.hair);
+  p.fill(hx + 3, hy - 8, hx + 5, hy - 5, pal.hair);
+  p.put(hx - 4, hy - 9, pal.hairLt);
+  p.put(hx + 4, hy - 9, pal.hairLt);
+  if (face === "right") {
+    p.fill(hx + 5, hy - 1, hx + 12, hy + 3, pal.skin);
+    p.put(hx + 12, hy + 1, pal.shoe);
+    p.fill(hx + 6, hy, hx + 7, hy + 1, pal.eye);
+    p.put(hx + 6, hy, pal.white);
+    p.put(hx + 11, hy + 2, pal.accent);
+  } else if (face === "left") {
+    p.fill(hx - 12, hy - 1, hx - 5, hy + 3, pal.skin);
+    p.put(hx - 12, hy + 1, pal.shoe);
+    p.fill(hx - 8, hy, hx - 7, hy + 1, pal.eye);
+    p.put(hx - 8, hy, pal.white);
+    p.put(hx - 11, hy + 2, pal.accent);
+  } else if (face === "up") {
+    p.fill(hx - 6, hy - 4, hx + 6, hy + 5, pal.hair);
+    p.fill(hx - 1, 28, hx + 2, 38, pal.hair);
+  } else {
+    p.fill(hx - 5, hy - 2, hx + 5, hy + 5, pal.skin);
+    p.fill(hx - 3, hy + 3, hx + 3, hy + 6, pal.skin);
+    p.fill(hx - 4, hy, hx - 3, hy + 1, pal.eye);
+    p.fill(hx + 2, hy, hx + 3, hy + 1, pal.eye);
+    p.put(hx - 4, hy, pal.white);
+    p.put(hx + 2, hy, pal.white);
+    p.put(hx, hy + 4, pal.shoe);
+    p.put(hx - 1, hy + 4, pal.accent);
+    p.put(hx + 1, hy + 4, pal.accent);
+  }
+  if (pose.flash || pose.spark) {
+    p.put(hx - 7, hy - 5, pal.accent);
+    p.put(hx + 7, hy - 4, pal.white);
+  }
+}
+
+function paintProcedural(arch: Archetype, gender: Gender, face: Face, pose: Pose): HTMLCanvasElement {
+  const pal = palettes(arch, gender);
+  const pix = new Pix();
+  const drawFaceDir: Face = face === "left" ? "right" : face;
+  if (arch === "wolverine") drawBeast(pix, pal, drawFaceDir, pose);
+  else drawHuman(pix, pal, arch, gender, drawFaceDir, pose);
+  pix.outline(pal.outline);
+  if (face === "left") pix.flipX();
+  return pix.canvas();
+}
+
+function derivePng(base: HTMLCanvasElement, poseIdStr: string, face: Face): HTMLCanvasElement {
+  const src = frameImageData(base);
+  const w = src.width;
+  const h = src.height;
+  const s = src.data;
+  const d = new Uint8ClampedArray(w * h * 4);
+  const pose = poseOf(poseIdStr, face);
+  const toward = face === "right" ? 1 : face === "left" ? -1 : 0;
+  const sample = (x: number, y: number): [number, number, number, number] => {
+    if (x < 0 || y < 0 || x >= w || y >= h) return [0, 0, 0, 0];
+    const i = (y * w + x) * 4;
+    return [s[i], s[i + 1], s[i + 2], s[i + 3]];
+  };
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      let sx = x;
+      let sy = y;
+      if (y < 32) {
+        sy += pose.bob;
+        sx -= pose.lean;
+        if (y < 22) {
+          /* head */
+        } else if (x < w / 2) sx -= pose.armLx;
+        else sx -= pose.armRx;
+        if (y >= 22) {
+          sy -= pose.armRy < 0 && x >= w / 2 ? pose.armRy : 0;
+          sy -= pose.armLy < 0 && x < w / 2 ? pose.armLy : 0;
+        }
+      } else {
+        if (x < w / 2) {
+          sx -= pose.legL;
+          sy += pose.liftL;
+        } else {
+          sx -= pose.legR;
+          sy += pose.liftR;
+        }
+      }
+      const [r, g, b, a] = sample(sx, sy);
+      const i = (y * w + x) * 4;
+      d[i] = r;
+      d[i + 1] = g;
+      d[i + 2] = b;
+      d[i + 3] = a;
+    }
+  }
+  const out = canvasFromImageData(new ImageData(d, w, h));
+  if (pose.spark || pose.flash) {
+    const ctx = out.getContext("2d")!;
+    ctx.imageSmoothingEnabled = false;
+    ctx.fillStyle = pose.flash ? "#ffe08a" : "#c8b0ff";
+    const ax = face === "left" ? 6 : face === "right" ? 26 : 16;
+    ctx.fillRect(ax, 8, 1, 1);
+    ctx.fillRect(ax + toward, 6, 1, 1);
+    ctx.fillStyle = "#fff";
+    ctx.fillRect(ax - 2, 7, 1, 1);
   }
   return out;
 }
 
-interface Span {
-  x: number;
-  y: number;
-  z0: number;
-  z1: number;
-  ci: number;
-}
+const frameCache = new Map<string, HTMLCanvasElement>();
 
-const spanCache = new Map<string, Span[]>();
-
-function spansOf(arch: Archetype, gender: Gender, pose: string): Span[] {
-  const key = `${arch}|${gender}|${pose}`;
-  const hit = spanCache.get(key);
+function frameOf(arch: Archetype, gender: Gender, face: Face, pose: string): HTMLCanvasElement {
+  const png = pngIdle(arch, gender, face);
+  const key = `${arch}|${gender}|${face}|${pose}|${png ? 1 : 0}`;
+  const hit = frameCache.get(key);
   if (hit) return hit;
-  const model = modelOf(arch, gender);
-  const off = offsetsFor(arch, pose);
-  const occ = new Map<string, number>();
-  for (const v of model) {
-    const o = off[v.p];
-    occ.set(vk(v.x + o.x, v.y + o.y, v.z + o.z), v.ci);
-  }
-  for (const e of extras(arch, pose)) occ.set(vk(e.x, e.y, e.z), e.ci);
-  const cols = new Map<string, Array<{ z: number; ci: number }>>();
-  for (const [k, ci] of occ) {
-    const p1 = k.indexOf(",");
-    const p2 = k.indexOf(",", p1 + 1);
-    const x = Number(k.slice(0, p1));
-    const y = Number(k.slice(p1 + 1, p2));
-    const z = Number(k.slice(p2 + 1));
-    const ck = `${x},${y}`;
-    let list = cols.get(ck);
-    if (!list) {
-      list = [];
-      cols.set(ck, list);
-    }
-    list.push({ z, ci });
-  }
-  const spans: Span[] = [];
-  for (const [ck, list] of cols) {
-    const p = ck.indexOf(",");
-    const x = Number(ck.slice(0, p));
-    const y = Number(ck.slice(p + 1));
-    for (const item of list) spans.push({ x, y, z0: item.z, z1: item.z, ci: item.ci });
-  }
-  spanCache.set(key, spans);
-  return spans;
-}
-
-function occSet(spans: Span[]): Set<string> {
-  const s = new Set<string>();
-  for (const sp of spans) {
-    for (let z = sp.z0; z <= sp.z1; z++) s.add(vk(sp.x, sp.y, z));
-  }
-  return s;
-}
-
-const occCache = new Map<string, Set<string>>();
-
-function occOf(arch: Archetype, gender: Gender, pose: string): Set<string> {
-  const key = `${arch}|${gender}|${pose}`;
-  let o = occCache.get(key);
-  if (!o) {
-    o = occSet(spansOf(arch, gender, pose));
-    occCache.set(key, o);
-  }
-  return o;
-}
-
-const SHADE = [1.28, 1.02, 0.62, 0.88, 0.7, 0.5];
-
-interface Face {
-  pts: Proj[];
-  fill: string;
-  d: number;
-}
-
-function emitFace(
-  faces: Face[],
-  project: ProjectFn,
-  pts: Array<[number, number, number]>,
-  col: RGB,
-  fi: number,
-): void {
-  const p = pts.map(([x, y, z]) => project(x, y, z));
-  const ax = p[1].x - p[0].x;
-  const ay = p[1].y - p[0].y;
-  const bx = p[2].x - p[0].x;
-  const by = p[2].y - p[0].y;
-  if (ax * by - ay * bx > 0) return;
-  const d = (p[0].d + p[1].d + p[2].d + p[3].d) * 0.25;
-  faces.push({ pts: p, fill: hex(col, SHADE[fi]), d });
-}
-
-function uncovered(occ: Set<string>, x: number, y: number, z0: number, z1: number, nx: number, ny: number, nz: number): Array<[number, number]> {
-  if (nz !== 0) {
-    const z = nz > 0 ? z1 + 1 : z0 - 1;
-    if (!occ.has(vk(x, y, z))) return [[z0, z1]];
-    return [];
-  }
-  const runs: Array<[number, number]> = [];
-  let start = -1;
-  for (let z = z0; z <= z1; z++) {
-    const hid = occ.has(vk(x + nx, y + ny, z));
-    if (!hid) {
-      if (start < 0) start = z;
-    } else if (start >= 0) {
-      runs.push([start, z - 1]);
-      start = -1;
-    }
-  }
-  if (start >= 0) runs.push([start, z1]);
-  return runs;
-}
-
-function drawSpans(
-  ctx: CanvasRenderingContext2D,
-  project: ProjectFn,
-  spans: Span[],
-  occ: Set<string>,
-  pal: RGB[],
-): void {
-  const faces: Face[] = [];
-  const hx = VOX_XY * 0.5;
-  for (const sp of spans) {
-    const col = pal[sp.ci];
-    const x0 = sp.x * VOX_XY - hx;
-    const x1 = sp.x * VOX_XY + hx;
-    const y0 = sp.y * VOX_XY - hx;
-    const y1 = sp.y * VOX_XY + hx;
-    const topRuns = uncovered(occ, sp.x, sp.y, sp.z0, sp.z1, 0, 0, 1);
-    if (topRuns.length) {
-      const zb = (sp.z1 + 1) * VOX_Z;
-      emitFace(
-        faces,
-        project,
-        [
-          [x0, y0, zb],
-          [x1, y0, zb],
-          [x1, y1, zb],
-          [x0, y1, zb],
-        ],
-        col,
-        0,
-      );
-    }
-    const sides: Array<{ nx: number; ny: number; fi: number; quad: (za: number, zb: number) => Array<[number, number, number]> }> = [
-      {
-        nx: 1,
-        ny: 0,
-        fi: 1,
-        quad: (za, zb) => [
-          [x1, y0, za],
-          [x1, y1, za],
-          [x1, y1, zb],
-          [x1, y0, zb],
-        ],
-      },
-      {
-        nx: -1,
-        ny: 0,
-        fi: 2,
-        quad: (za, zb) => [
-          [x0, y0, za],
-          [x0, y1, za],
-          [x0, y1, zb],
-          [x0, y0, zb],
-        ],
-      },
-      {
-        nx: 0,
-        ny: 1,
-        fi: 3,
-        quad: (za, zb) => [
-          [x0, y1, za],
-          [x1, y1, za],
-          [x1, y1, zb],
-          [x0, y1, zb],
-        ],
-      },
-      {
-        nx: 0,
-        ny: -1,
-        fi: 4,
-        quad: (za, zb) => [
-          [x0, y0, za],
-          [x1, y0, za],
-          [x1, y0, zb],
-          [x0, y0, zb],
-        ],
-      },
-    ];
-    for (const s of sides) {
-      for (const [za, zb] of uncovered(occ, sp.x, sp.y, sp.z0, sp.z1, s.nx, s.ny, 0)) {
-        emitFace(faces, project, s.quad(za * VOX_Z, (zb + 1) * VOX_Z), col, s.fi);
-      }
-    }
-  }
-  faces.sort((a, b) => a.d - b.d);
-  ctx.lineJoin = "miter";
-  ctx.lineWidth = 0.45;
-  ctx.strokeStyle = "rgba(6, 6, 10, 0.55)";
-  for (const f of faces) {
-    ctx.beginPath();
-    ctx.moveTo(f.pts[0].x, f.pts[0].y);
-    ctx.lineTo(f.pts[1].x, f.pts[1].y);
-    ctx.lineTo(f.pts[2].x, f.pts[2].y);
-    ctx.lineTo(f.pts[3].x, f.pts[3].y);
-    ctx.closePath();
-    ctx.fillStyle = f.fill;
-    ctx.fill();
-    ctx.stroke();
-  }
+  let canvas: HTMLCanvasElement;
+  if (png && pose.startsWith("i") && pose === "i0") canvas = png;
+  else if (png) canvas = derivePng(png, pose, face);
+  else canvas = paintProcedural(arch, gender, face, poseOf(pose, face));
+  frameCache.set(key, canvas);
+  return canvas;
 }
 
 export function drawRig(
   ctx: CanvasRenderingContext2D,
-  project: ProjectFn,
   u: Unit,
   now: number,
   zoom: number,
+  feetX: number,
+  feetY: number,
+  yaw: number,
 ): void {
+  const face = screenFace(u.dir, yaw);
   const pose = poseId(u, now);
-  const spans = spansOf(u.archetype, u.gender, pose);
-  const occ = occOf(u.archetype, u.gender, pose);
-  const pal = palettes(u.archetype, u.gender);
-  void zoom;
-  drawSpans(ctx, project, spans, occ, pal);
+  const spr = frameOf(u.archetype, u.gender, face, pose);
+  const mag = zoom >= 0.55 ? 3 : 2;
+  const dw = SPRITE_W * mag;
+  const dh = SPRITE_H * mag;
+  ctx.imageSmoothingEnabled = false;
+  ctx.drawImage(spr, 0, 0, SPRITE_W, SPRITE_H, Math.round(feetX - dw / 2), Math.round(feetY - dh), dw, dh);
+}
+
+export function spriteDrawHeight(zoom: number): number {
+  return SPRITE_H * (zoom >= 0.55 ? 3 : 2);
 }

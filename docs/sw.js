@@ -1,4 +1,4 @@
-const CACHE = "yejie-v8";
+const CACHE = "yejie-v9";
 
 const PRECACHE = [
   "./",
@@ -11,6 +11,10 @@ const PRECACHE = [
   "./sprites/priya.png",
   "./sprites/enemy.png",
   "./sprites/hale.png",
+  "./sprites/hd2d-mara.png",
+  "./sprites/hd2d-dana.png",
+  "./sprites/hd2d-priya.png",
+  "./sprites/hd2d-delinquent.png",
 ];
 
 self.addEventListener("install", (event) => {
