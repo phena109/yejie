@@ -1,6 +1,6 @@
 import type { GameMap, MapTheme } from "./map";
 import type { BoardObj } from "./objects";
-import { CHAR_H, drawRig, localToGrid, spriteDrawHeight, type ProjectFn } from "./rig";
+import { CHAR_H, drawRig, localToGrid, rigDrawHeight, type ProjectFn } from "./rig";
 import type { Dir, FloatText, Phase, Tile, Unit, Vec2 } from "./types";
 import { DIRS, factionColor, key, nextYaw, yawDir, yawPoint } from "./types";
 
@@ -947,6 +947,16 @@ export class Renderer {
     ctx.stroke();
   }
 
+  private projectFor(u: Unit, map: GameMap): ProjectFn {
+    const h = map.heightAt(u.x, u.y);
+    return (lx: number, ly: number, lz: number) => {
+      const g = localToGrid(lx, ly, u.dir);
+      const screen = this.worldToScreen(u.x + g.x, u.y + g.y, h + lz * CHAR_H);
+      const yp = yawPoint(u.x + g.x, u.y + g.y, this.yaw, map.w, map.h);
+      return { x: screen.x, y: screen.y, d: yp.x + yp.y - lz * CHAR_H * 0.45 };
+    };
+  }
+
   private drawUnit(u: Unit, map: GameMap, overlays: DrawOverlays): void {
     const ctx = this.ctx;
     const h = map.heightAt(u.x, u.y);
@@ -959,22 +969,22 @@ export class Renderer {
     const dx = (face.x - face.y) * 6 * z * (u.lunge || 0);
     const dy = (face.x + face.y) * 3 * z * (u.lunge || 0);
     const x = p.x + dx;
-    const feetY = p.y + dy + 1 * z;
+    const feetY = p.y + dy + 2 * z;
     const done = u.acted;
     ctx.save();
     if (done) ctx.globalAlpha *= 0.45;
 
-    ctx.fillStyle = "rgba(0,0,0,0.38)";
+    ctx.fillStyle = "rgba(0,0,0,0.4)";
     ctx.beginPath();
-    ctx.ellipse(x, feetY + 1 * z, 9 * scale, 3.6 * scale, 0, 0, Math.PI * 2);
+    ctx.ellipse(x, feetY + 1 * z, 11 * scale, 4.8 * scale, 0, 0, Math.PI * 2);
     ctx.fill();
 
     ctx.strokeStyle = accent;
-    ctx.lineWidth = Math.max(1.6, 1.8 * z);
+    ctx.lineWidth = Math.max(2, 2.2 * z);
     ctx.beginPath();
-    ctx.ellipse(x, feetY + 1 * z, 10.2 * scale, 4.2 * scale, 0, 0, Math.PI * 2);
+    ctx.ellipse(x, feetY + 1 * z, 12.2 * scale, 5.4 * scale, 0, 0, Math.PI * 2);
     ctx.stroke();
-    ctx.strokeStyle = "rgba(8,8,12,0.75)";
+    ctx.strokeStyle = "rgba(8,8,12,0.85)";
     ctx.lineWidth = 1;
     ctx.stroke();
 
@@ -991,14 +1001,19 @@ export class Renderer {
       ctx.stroke();
     }
 
-    drawRig(ctx, u, this.time, z, x, feetY, this.yaw);
+    const project = this.projectFor(u, map);
+    const shifted: ProjectFn = (lx, ly, lz) => {
+      const q = project(lx, ly, lz);
+      return { x: q.x + dx, y: q.y + dy, d: q.d };
+    };
+    drawRig(ctx, shifted, u, this.time, z);
 
     this.drawFacingWedge(u, map, x, feetY, z);
 
-    const dh = spriteDrawHeight(z);
+    const dh = rigDrawHeight(z) * (elite ? 1.12 : 1);
     const bw = 22 * scale;
     const ratio = Math.max(0, u.hp / u.maxHp);
-    const barY = feetY - dh - 3 * scale;
+    const barY = feetY - dh - 4 * scale;
     ctx.fillStyle = "#111018";
     ctx.fillRect(x - bw / 2, barY, bw, 3.5 * scale);
     ctx.fillStyle = accent;
@@ -1007,7 +1022,7 @@ export class Renderer {
     ctx.fillStyle = "#e8eef2";
     ctx.font = `${Math.max(9, 10 * z)}px sans-serif`;
     ctx.textAlign = "center";
-    ctx.fillText(u.name.split(" ")[0], x, feetY + 12 * z);
+    ctx.fillText(u.name.split(" ")[0], x, feetY + 16 * z);
 
     ctx.restore();
 
@@ -1036,16 +1051,16 @@ export class Renderer {
     const h = map.heightAt(u.x, u.y);
     const project = this.projectAt(u.x, u.y, h, u.dir, map);
     const tip = [
-      project(0, 0.26, 0.03),
-      project(-0.09, 0.09, 0.03),
-      project(0.09, 0.09, 0.03),
+      project(0, 0.16, 0.03),
+      project(-0.055, 0.055, 0.03),
+      project(0.055, 0.055, 0.03),
     ];
     const body = [
-      project(-0.11, 0.08, 0.018),
-      project(0.11, 0.08, 0.018),
-      project(0.13, -0.12, 0.018),
-      project(0, -0.04, 0.018),
-      project(-0.13, -0.12, 0.018),
+      project(-0.065, 0.05, 0.018),
+      project(0.065, 0.05, 0.018),
+      project(0.08, -0.07, 0.018),
+      project(0, -0.025, 0.018),
+      project(-0.08, -0.07, 0.018),
     ];
     ctx.beginPath();
     ctx.moveTo(body[0].x, body[0].y);

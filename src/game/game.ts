@@ -26,8 +26,7 @@ import {
   type MoveField,
 } from "./pathfinding";
 import { BARREL_BLAST } from "./objects";
-import { ATTACK_MS, CAST_MS } from "./rig";
-import { loadHd2dSprites } from "./sprites";
+import { ATTACK_MS, CAST_MS, precacheRigs } from "./rig";
 import { audio } from "./audio";
 import { PITCH_DEFAULT, Renderer, type AreaKind } from "./renderer";
 import {
@@ -175,7 +174,7 @@ export class Game {
 
   constructor(canvas: HTMLCanvasElement) {
     this.renderer = new Renderer(canvas);
-    void loadHd2dSprites();
+    precacheRigs();
     this.input = new PointerInput(canvas, this.renderer);
     this.input.onTap = (p) => this.onTap(p);
     this.map = new GameMap(this.mission.map);
@@ -283,7 +282,7 @@ export class Game {
       };
       requestAnimationFrame(loop);
     };
-    void loadHd2dSprites().then(run, run);
+    run();
   }
 
   applyHash(): void {
