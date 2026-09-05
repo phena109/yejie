@@ -1006,7 +1006,7 @@ export class Renderer {
       const q = project(lx, ly, lz);
       return { x: q.x + dx, y: q.y + dy, d: q.d };
     };
-    drawRig(ctx, shifted, u, this.time, z);
+    drawRig(ctx, shifted, u, this.time, z, this.yaw, this.pitch);
 
     this.drawFacingWedge(u, map, x, feetY, z);
 
@@ -1051,16 +1051,16 @@ export class Renderer {
     const h = map.heightAt(u.x, u.y);
     const project = this.projectAt(u.x, u.y, h, u.dir, map);
     const tip = [
-      project(0, 0.16, 0.03),
-      project(-0.055, 0.055, 0.03),
-      project(0.055, 0.055, 0.03),
+      project(0, 0.11, 0.03),
+      project(-0.035, 0.04, 0.03),
+      project(0.035, 0.04, 0.03),
     ];
     const body = [
-      project(-0.065, 0.05, 0.018),
-      project(0.065, 0.05, 0.018),
-      project(0.08, -0.07, 0.018),
-      project(0, -0.025, 0.018),
-      project(-0.08, -0.07, 0.018),
+      project(-0.04, 0.035, 0.018),
+      project(0.04, 0.035, 0.018),
+      project(0.05, -0.045, 0.018),
+      project(0, -0.015, 0.018),
+      project(-0.05, -0.045, 0.018),
     ];
     ctx.beginPath();
     ctx.moveTo(body[0].x, body[0].y);
