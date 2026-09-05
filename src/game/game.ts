@@ -164,6 +164,7 @@ export class Game {
   private btnBag = el<HTMLButtonElement>("btn-bag");
   private btnContinue = el<HTMLButtonElement>("btn-continue");
   private btnMute = el<HTMLButtonElement>("btn-mute");
+  private btnPauseNext = el<HTMLButtonElement>("btn-pause-next");
   private pauseEl = el<HTMLElement>("pause");
   private titleBuild = el<HTMLElement>("title-build");
   private camHint = el<HTMLElement>("cam-hint");
@@ -171,6 +172,7 @@ export class Game {
   private pitchSlider = el<HTMLInputElement>("pitch-slider");
   private pendingSlot: number | null = null;
   private pendingQuit = false;
+  private pendingJump: number | null = null;
 
   constructor(canvas: HTMLCanvasElement) {
     this.renderer = new Renderer(canvas);
@@ -206,6 +208,10 @@ export class Game {
     el<HTMLButtonElement>("btn-pause-save").addEventListener("click", () => this.openSaves("save"));
     el<HTMLButtonElement>("btn-pause-load").addEventListener("click", () => this.openSaves("load"));
     this.btnMute.addEventListener("click", () => this.toggleMute());
+    this.btnPauseNext.addEventListener("click", () => this.requestNextMission());
+    document.querySelectorAll<HTMLButtonElement>("[data-test-mission]").forEach((button) => {
+      button.addEventListener("click", () => this.jumpToMission(Number(button.dataset.testMission)));
+    });
     el<HTMLButtonElement>("btn-quit-title").addEventListener("click", () => this.quitToTitle());
     el<HTMLButtonElement>("modal-close").addEventListener("click", () => this.closeModal());
     el<HTMLButtonElement>("confirm-yes").addEventListener("click", () => this.confirmYes());
@@ -1230,6 +1236,31 @@ export class Game {
   }
 
 
+  private jumpToMission(index: number): void {
+    if (index < 0 || index >= MISSIONS.length) return;
+    this.pendingJump = null;
+    this.inventory = cloneInventory(START_INVENTORY);
+    this.missionStartInventory = cloneInventory(START_INVENTORY);
+    this.m1DropGiven = false;
+    this.missionIndex = index;
+    this.closePause();
+    this.closeModal();
+    this.result.hidden = true;
+    this.result.classList.remove("lose");
+    this.title.hidden = true;
+    this.briefing.hidden = false;
+    this.resetBattle();
+    this.phase = "briefing";
+    this.syncUi();
+  }
+
+  private requestNextMission(): void {
+    if (this.missionIndex >= MISSIONS.length - 1 || this.busy) return;
+    this.pendingJump = this.missionIndex + 1;
+    this.confirmText.textContent = "跳到測試關卡 " + String((this.pendingJump ?? 0) + 1) + "？目前戰鬥不會保留。";
+    this.confirmEl.hidden = false;
+  }
+
   private openPause(): void {
     if (
       this.phase === "title" ||
@@ -1539,6 +1570,12 @@ export class Game {
       this.goTitle();
       return;
     }
+    if (this.pendingJump !== null) {
+      const target = this.pendingJump;
+      this.pendingJump = null;
+      this.jumpToMission(target);
+      return;
+    }
     if (this.pendingSlot !== null) this.writeSlot(this.pendingSlot);
     this.pendingSlot = null;
   }
@@ -1547,6 +1584,7 @@ export class Game {
     this.confirmEl.hidden = true;
     this.pendingSlot = null;
     this.pendingQuit = false;
+    this.pendingJump = null;
   }
 
   private writeSlot(i: number): void {

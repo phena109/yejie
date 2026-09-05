@@ -638,3 +638,27 @@ button:disabled {
   right: 12px;
   padding: 0 76px;
 }
+
+.test-jump {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  margin: 14px auto 0;
+  max-width: 280px;
+  color: var(--muted);
+  font-size: 11px;
+}
+.test-jump span { width: 100%; letter-spacing: 0.08em; color: #e5c56a; }
+.test-jump button {
+  min-width: 38px;
+  padding: 7px 8px;
+  border: 1px solid rgba(229, 197, 106, 0.5);
+  border-radius: 5px;
+  background: rgba(229, 197, 106, 0.08);
+  color: #ffe7a0;
+  font: inherit;
+}
+.test-jump button:active { background: rgba(229, 197, 106, 0.28); }
+#btn-pause-next { color: #ffe7a0; border-color: rgba(229, 197, 106, 0.5); }
