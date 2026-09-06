@@ -1,4 +1,4 @@
-import { MISSIONS, makePlayerUnits, type Mission } from "../data/mission";
+import { MISSIONS, makePlayerUnits, type Mission, type MissionBeat, type MissionSpeaker } from "../data/mission";
 import { planEnemy } from "./ai";
 import { makeAttackForecast, makeSkillForecast } from "./combat";
 import { PointerInput } from "./input";
@@ -65,6 +65,18 @@ function el<T extends HTMLElement>(id: string): T {
   return n as T;
 }
 
+type VnSide = "left" | "right";
+
+const VN_SPRITES: Record<MissionSpeaker, string> = {
+  Mara: "./sprites/vn-mara.png",
+  Dana: "./sprites/vn-dana.png",
+  Priya: "./sprites/vn-priya.png",
+};
+
+const MOVE_STEP_MS = 250;
+const ACTION_BEAT_MS = 520;
+const ENEMY_GAP_MS = 460;
+
 const ROLE_LABEL: Record<Unit["role"], string> = {
   striker: "突擊",
   controller: "控制",
@@ -125,6 +137,10 @@ export class Game {
   modalKind: "off" | "bag" | "save" | "load" | "target" = "off";
   paused = false;
   pauseOpen = false;
+  private vnOpen = false;
+  private vnDone: (() => void) | null = null;
+  private m1IntroPlayed = false;
+  private m1MidBeatPlayed = false;
 
   renderer: Renderer;
   input: PointerInput;
@@ -166,6 +182,11 @@ export class Game {
   private btnMute = el<HTMLButtonElement>("btn-mute");
   private btnPauseNext = el<HTMLButtonElement>("btn-pause-next");
   private pauseEl = el<HTMLElement>("pause");
+  private vn = el<HTMLElement>("vn");
+  private vnBust = el<HTMLImageElement>("vn-bust");
+  private vnBox = el<HTMLElement>("vn-box");
+  private vnName = el<HTMLElement>("vn-name");
+  private vnText = el<HTMLElement>("vn-text");
   private titleBuild = el<HTMLElement>("title-build");
   private camHint = el<HTMLElement>("cam-hint");
   private yawSlider = el<HTMLInputElement>("yaw-slider");
@@ -209,6 +230,13 @@ export class Game {
     el<HTMLButtonElement>("btn-pause-load").addEventListener("click", () => this.openSaves("load"));
     this.btnMute.addEventListener("click", () => this.toggleMute());
     this.btnPauseNext.addEventListener("click", () => this.requestNextMission());
+    this.vn.addEventListener("click", () => this.advanceVn());
+    this.vn.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        this.advanceVn();
+      }
+    });
     document.querySelectorAll<HTMLButtonElement>("[data-test-mission]").forEach((button) => {
       button.addEventListener("click", () => this.jumpToMission(Number(button.dataset.testMission)));
     });
@@ -441,6 +469,46 @@ export class Game {
     this.hudSub.textContent = m.hudSub;
   }
 
+  /** Display one deliberate, tap-to-advance story beat over the live board. */
+  showVn({ speaker, side, text }: MissionBeat): Promise<void> {
+    this.vnOpen = true;
+    this.vn.classList.toggle("right", side === "right");
+    this.vn.classList.toggle("left", side !== "right");
+    this.vnBust.src = VN_SPRITES[speaker];
+    this.vnBust.alt = speaker;
+    this.vnName.textContent = speaker;
+    this.vnText.textContent = text;
+    this.vn.hidden = false;
+    this.syncUi();
+    return new Promise<void>((resolve) => {
+      this.vnDone = resolve;
+      this.vnBox.focus({ preventScroll: true });
+    });
+  }
+
+  private advanceVn(): void {
+    const done = this.vnDone;
+    if (!done) return;
+    this.vnDone = null;
+    this.vnOpen = false;
+    this.vn.hidden = true;
+    this.vnBust.removeAttribute("src");
+    done();
+    this.syncUi();
+  }
+
+  private async playMissionIntro(): Promise<void> {
+    if (this.missionIndex !== 0 || this.m1IntroPlayed) return;
+    this.m1IntroPlayed = true;
+    const sides: VnSide[] = ["left", "right", "left"];
+    const lines: MissionBeat[] = this.mission.voices.slice(0, 3).map((voice, i) => ({
+      speaker: voice.name as MissionSpeaker,
+      side: sides[i] ?? "left",
+      text: voice.line,
+    }));
+    for (const line of lines) await this.showVn(line);
+  }
+
   private resetBattle(): void {
     const m = this.mission;
     this.map = new GameMap(m.map);
@@ -453,6 +521,11 @@ export class Game {
     this.busy = false;
     this.loseKind = "wipe";
     this.pendingItem = null;
+    this.m1IntroPlayed = false;
+    this.m1MidBeatPlayed = false;
+    this.vnOpen = false;
+    this.vnDone = null;
+    this.vn.hidden = true;
     this.log = "點選單位開始行動。可先攻擊或待機，不必先移動。拖曳平移，雙指縮放並旋轉，上下俯仰。";
     this.renderer.yaw = 0;
     this.renderer.setPitch(PITCH_DEFAULT);
@@ -480,13 +553,18 @@ export class Game {
     this.applySave(s);
   }
 
-  private begin(): void {
+  private async begin(): Promise<void> {
     this.missionStartInventory = cloneInventory(this.inventory);
     this.briefing.hidden = true;
     this.title.hidden = true;
     this.phase = "select";
     audio.setBgm("battle");
     this.renderer.centerOn(this.units, this.map);
+    this.busy = this.missionIndex === 0 && !this.m1IntroPlayed;
+    this.syncUi();
+    this.autosave();
+    if (this.busy) await this.playMissionIntro();
+    this.busy = false;
     this.syncUi();
     this.autosave();
   }
@@ -617,7 +695,7 @@ export class Game {
     for (let i = 1; i < path.length; i++) {
       u.x = path[i].x;
       u.y = path[i].y;
-      await this.waitMs(90);
+      await this.waitMs(MOVE_STEP_MS);
     }
     // Preserve the starting facing during the walk; snap once at the move endpoint.
     u.dir = dirFromTo(path[path.length - 2], path[path.length - 1]);
@@ -904,6 +982,7 @@ export class Game {
       actor.actedThisTurn = true;
       actor.lunge = 0;
       actor.anim = "idle";
+      await this.waitMs(ACTION_BEAT_MS);
       this.busy = false;
       if (this.checkEnd()) return;
       if (actor.movedThisTurn) {
@@ -949,7 +1028,7 @@ export class Game {
     actor.actedThisTurn = true;
     actor.lunge = 0;
     actor.anim = "idle";
-    await this.waitMs(160);
+    await this.waitMs(ACTION_BEAT_MS);
     this.busy = false;
     if (this.checkEnd()) return;
     if (actor.movedThisTurn) {
@@ -963,6 +1042,8 @@ export class Game {
   }
 
   private async finishUnit(): Promise<void> {
+    // Keep input locked through the endpoint snap and a readable beat.
+    this.busy = true;
     if (this.selected) {
       this.selected.acted = true;
       this.selected.lunge = 0;
@@ -970,6 +1051,13 @@ export class Game {
     this.clearSel();
     this.inspect = null;
     this.phase = "select";
+    this.syncUi();
+    await this.waitMs(ACTION_BEAT_MS);
+    if (this.missionIndex === 0 && !this.m1MidBeatPlayed && this.mission.midBeats?.length) {
+      this.m1MidBeatPlayed = true;
+      for (const line of this.mission.midBeats) await this.showVn(line);
+    }
+    this.busy = false;
     this.syncUi();
     this.autosave();
     if (this.units.filter((u) => u.team === "player" && !u.dead && !u.acted && !u.npc).length === 0) {
@@ -985,6 +1073,7 @@ export class Game {
     this.phase = "enemy";
     this.log = "敵軍行動中";
     this.syncUi();
+    await this.waitMs(ENEMY_GAP_MS);
     await this.runEnemy();
   }
 
@@ -992,7 +1081,8 @@ export class Game {
     this.busy = true;
     const actors = this.units.filter((u) => !u.dead && !isPlayerControlled(u));
     const protectId = this.mission.protectId;
-    for (const e of actors) {
+    for (let i = 0; i < actors.length; i++) {
+      const e = actors[i];
       if (this.phase === "victory" || this.phase === "defeat") break;
       if (e.skipNext) {
         e.skipNext = false;
@@ -1000,6 +1090,7 @@ export class Game {
         this.log = `${e.name} 被攔住，無法行動。`;
         this.syncUi();
         await this.waitMs(420);
+        if (i < actors.length - 1) await this.waitMs(ENEMY_GAP_MS);
         continue;
       }
       const plan = planEnemy(e, this.map, this.units, protectId, this.intel);
@@ -1010,7 +1101,7 @@ export class Game {
       for (let i = 1; i < plan.path.length; i++) {
         e.x = plan.path[i].x;
         e.y = plan.path[i].y;
-        await this.waitMs(85);
+        await this.waitMs(MOVE_STEP_MS);
       }
       if (plan.path.length > 1) e.dir = dirFromTo(plan.path[plan.path.length - 2], plan.path[plan.path.length - 1]);
       e.anim = "idle";
@@ -1055,6 +1146,7 @@ export class Game {
         await this.waitMs(80);
       }
       e.acted = true;
+      if (i < actors.length - 1) await this.waitMs(ENEMY_GAP_MS);
     }
     for (const u of this.units) {
       u.acted = false;
@@ -1877,7 +1969,8 @@ export class Game {
       this.phase === "briefing" ||
       this.phase === "title" ||
       this.phase === "victory" ||
-      this.phase === "defeat";
+      this.phase === "defeat" ||
+      this.vnOpen;
     this.btnEnd.hidden = !leftover || hideChrome;
     this.btnRotate.hidden = hideChrome;
     this.btnPause.hidden = hidePause;

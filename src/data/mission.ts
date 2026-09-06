@@ -1,6 +1,10 @@
 import type { MapDef } from "../game/map";
 import type { Archetype, Behaviour, Dir, Gender, Role, SkillKind, Stance, Team, Unit, Vec2 } from "../game/types";
 
+export type MissionSpeaker = "Mara" | "Dana" | "Priya";
+
+export interface MissionBeat { speaker: MissionSpeaker; side: "left" | "right"; text: string; }
+
 type PartialUnit = Omit<
   Unit,
   | "acted"
@@ -97,6 +101,7 @@ export interface Mission {
   hudSub: string;
   paragraphs: string[];
   voices: Array<{ name: string; line: string }>;
+  midBeats?: MissionBeat[];
   winCond: string;
   loseCond: string;
   winTitle: string;
@@ -321,6 +326,9 @@ export const MISSIONS: Mission[] = [
       { name: "Mara", line: "屋頂不對勁。不是穿制服的。巷口粉筆記號又近了一格——跟週二同一隻手。" },
       { name: "Dana", line: "上去。樓梯我先走。你看到了再喊。" },
       { name: "Priya", line: "街上要是還有傷患，我不走。棋盤再急，也不能拿活人當棋子。" },
+    ],
+    midBeats: [
+      { speaker: "Mara", side: "left", text: "粉筆灰還沒被風吹散。有人剛從這裡下去。" },
     ],
     winCond: "擊敗 Crosby",
     loseCond: "三人全部倒下",
