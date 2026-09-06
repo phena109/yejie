@@ -109,6 +109,7 @@ export class Renderer {
   pitch = PITCH_DEFAULT;
   private mapW = 10;
   private mapH = 12;
+  private readonly kingsWharf = new Image();
 
   tileH(): number {
     return TILE_W * Math.sin((this.pitch * Math.PI) / 180);
@@ -137,6 +138,8 @@ export class Renderer {
     const ctx = canvas.getContext("2d");
     if (!ctx) throw new Error("canvas");
     this.ctx = ctx;
+    this.kingsWharf.decoding = "async";
+    this.kingsWharf.src = "./sprites/scene-kings-wharf.png";
     this.resize();
   }
 
@@ -345,23 +348,42 @@ export class Renderer {
   private drawBackdrop(theme: MapTheme): void {
     const ctx = this.ctx;
     const g = ctx.createLinearGradient(0, 0, 0, this.h);
-    if (theme === "alley" || theme === "warehouse" || theme === "street") {
-      g.addColorStop(0, "#0c0d12");
-      g.addColorStop(0.5, "#0a090c");
-      g.addColorStop(1, "#140c08");
+    if (theme === "roof" && this.kingsWharf.complete && this.kingsWharf.naturalWidth > 0) {
+      const scale = Math.max(this.w / this.kingsWharf.naturalWidth, this.h / this.kingsWharf.naturalHeight);
+      const dw = this.kingsWharf.naturalWidth * scale;
+      const dh = this.kingsWharf.naturalHeight * scale;
+      const dx = (this.w - dw) * 0.42;
+      const dy = (this.h - dh) * 0.46;
+      ctx.save();
+      ctx.globalAlpha = 0.86;
+      ctx.drawImage(this.kingsWharf, dx, dy, dw, dh);
+      ctx.fillStyle = "rgba(5, 8, 18, 0.42)";
+      ctx.fillRect(0, 0, this.w, this.h);
+      const fade = ctx.createLinearGradient(0, 0, 0, this.h);
+      fade.addColorStop(0, "rgba(4, 8, 18, 0.38)");
+      fade.addColorStop(0.5, "rgba(6, 7, 14, 0.08)");
+      fade.addColorStop(1, "rgba(4, 5, 10, 0.62)");
+      ctx.fillStyle = fade;
+      ctx.fillRect(0, 0, this.w, this.h);
+      ctx.restore();
     } else {
-      g.addColorStop(0, "#0b1020");
-      g.addColorStop(0.45, "#090914");
-      g.addColorStop(1, "#120818");
+      if (theme === "alley" || theme === "warehouse" || theme === "street") {
+        g.addColorStop(0, "#0c0d12");
+        g.addColorStop(0.5, "#0a090c");
+        g.addColorStop(1, "#140c08");
+      } else {
+        g.addColorStop(0, "#0b1020");
+        g.addColorStop(0.45, "#090914");
+        g.addColorStop(1, "#120818");
+      }
+      ctx.fillStyle = g;
+      ctx.fillRect(0, 0, this.w, this.h);
     }
-    ctx.fillStyle = g;
-    ctx.fillRect(0, 0, this.w, this.h);
-
     ctx.save();
-    ctx.globalAlpha = 0.16;
+    ctx.globalAlpha = theme === "roof" ? 0.24 : 0.16;
     for (let i = 0; i < 8; i++) {
       const x = (i * 73 + (this.time * 0.004) % 73) % this.w;
-      ctx.fillStyle = theme === "alley" ? (i % 2 ? "#ffb040" : "#c45a2a") : i % 2 ? "#ff3d8a" : "#3ef0d0";
+      ctx.fillStyle = theme === "alley" ? (i % 2 ? "#ffb040" : "#c45a2a") : i % 2 ? "#ffb040" : "#ff6b35";
       ctx.fillRect(x, 8 + (i % 3) * 10, 18, 4);
     }
     ctx.restore();
@@ -632,13 +654,34 @@ export class Renderer {
       ctx.lineTo(crack.x, crack.y);
       ctx.stroke();
     } else if (map.theme === "roof") {
-      ctx.strokeStyle = "rgba(0,0,0,0.2)";
+      if (this.kingsWharf.complete && this.kingsWharf.naturalWidth > 0) {
+        ctx.globalAlpha = 0.14;
+        ctx.drawImage(this.kingsWharf, -this.w * 0.2, -this.h * 0.18, this.w * 1.4, this.h * 1.2);
+        ctx.globalAlpha = 1;
+        ctx.fillStyle = "rgba(88, 42, 26, 0.16)";
+        ctx.fill();
+      }
+      ctx.strokeStyle = "rgba(255, 192, 106, 0.22)";
+      ctx.lineWidth = Math.max(1, z);
       const a = lerp2(top[0], top[2], 0.5);
       const b = lerp2(top[1], top[3], 0.5);
       ctx.beginPath();
       ctx.moveTo(a.x, a.y);
       ctx.lineTo(b.x, b.y);
       ctx.stroke();
+      if (!t.prop && !t.blocked && hash01(t.x * 31 + t.y * 47) < 0.22) {
+        ctx.strokeStyle = "rgba(245, 221, 166, 0.68)";
+        ctx.lineWidth = Math.max(1, 1.25 * z);
+        ctx.beginPath();
+        ctx.ellipse(cx + hw * 0.05, cy + hh * 0.04, hw * 0.28, hh * 0.28, 0, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.moveTo(cx - hw * 0.16, cy + hh * 0.04);
+        ctx.lineTo(cx + hw * 0.22, cy + hh * 0.04);
+        ctx.moveTo(cx + hw * 0.03, cy - hh * 0.18);
+        ctx.lineTo(cx + hw * 0.03, cy + hh * 0.2);
+        ctx.stroke();
+      }
     } else {
       ctx.strokeStyle = pal.seam;
       ctx.beginPath();
