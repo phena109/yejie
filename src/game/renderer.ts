@@ -1006,7 +1006,7 @@ export class Renderer {
       const q = project(lx, ly, lz);
       return { x: q.x + dx, y: q.y + dy, d: q.d };
     };
-    drawRig(ctx, shifted, u, this.time, z, this.yaw, this.pitch);
+    drawRig(ctx, shifted, u, this.time, z, this.yaw);
 
     this.drawFacingWedge(u, map, x, feetY, z);
 

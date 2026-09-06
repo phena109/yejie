@@ -615,11 +615,12 @@ export class Game {
     u.anim = "walk";
     u.animStart = performance.now();
     for (let i = 1; i < path.length; i++) {
-      u.dir = dirFromTo(path[i - 1], path[i]);
       u.x = path[i].x;
       u.y = path[i].y;
       await this.waitMs(90);
     }
+    // Preserve the starting facing during the walk; snap once at the move endpoint.
+    u.dir = dirFromTo(path[path.length - 2], path[path.length - 1]);
     u.anim = "idle";
     u.movedThisTurn = true;
     this.tryPickup(u);
@@ -1007,11 +1008,11 @@ export class Game {
         e.animStart = performance.now();
       }
       for (let i = 1; i < plan.path.length; i++) {
-        e.dir = dirFromTo(plan.path[i - 1], plan.path[i]);
         e.x = plan.path[i].x;
         e.y = plan.path[i].y;
         await this.waitMs(85);
       }
+      if (plan.path.length > 1) e.dir = dirFromTo(plan.path[plan.path.length - 2], plan.path[plan.path.length - 1]);
       e.anim = "idle";
       this.tryPickup(e);
       if (plan.target && !plan.target.dead) {

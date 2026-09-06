@@ -189,15 +189,18 @@ function ensureGL(): boolean {
   } catch { return false; }
 }
 function dirAngle(dir: Dir): number { return dir * Math.PI / 2; }
+const PORTRAIT_PITCH = 30;
 function placeCamera(yaw: number, pitchDeg: number): void { if (!camera) return; const pitch = pitchDeg * Math.PI / 180; const d = 4.2; const cp = Math.cos(pitch); const sp = Math.sin(pitch); camera.position.set(Math.sin(yaw) * cp * d, sp * d + 0.85, Math.cos(yaw) * cp * d); camera.lookAt(0, 0.88, 0); camera.updateProjectionMatrix(); }
-export function drawRig(ctx: CanvasRenderingContext2D, project: ProjectFn, u: Unit, now: number, zoom: number, camYaw = 0, camPitch = 30): void {
-  const feet = project(0, 0, 0); const crown = project(0, 0, 1); const scrH = Math.max(8, Math.abs(feet.y - crown.y) * 1.12); const scrW = scrH * 192 / 240;
+export function drawRig(ctx: CanvasRenderingContext2D, project: ProjectFn, u: Unit, now: number, zoom: number, camYaw = 0): void {
+  // The portrait is a fixed-size billboard. Projected crown/feet distance changes with map pitch.
+  const feet = project(0, 0, 0); const scrH = rigDrawHeight(zoom) * (u.role === "elite" ? 1.12 : 1); const scrW = scrH * 192 / 240;
   if (!ensureGL() || !renderer || !scene || !camera || !stage) { ctx.fillStyle = "#6a7080"; ctx.beginPath(); ctx.ellipse(feet.x, feet.y - scrH * 0.35, scrW * 0.22, scrH * 0.35, 0, 0, Math.PI * 2); ctx.fill(); return; }
   const t = template(u.archetype, u.gender); const active = activeClip(u, now); pose(t.parts, u.archetype, active.clip, active.t, now);
   while (stage.children.length) stage.remove(stage.children[0]); if (t.parts.root.parent) t.parts.root.parent.remove(t.parts.root); stage.add(t.parts.root);
   // +Z is the model face; rotate it to the exact grid direction before projection.
-  t.parts.root.rotation.set(0, dirAngle(u.dir), 0); placeCamera(camYaw, camPitch); renderer.render(scene, camera);
-  ctx.save(); ctx.imageSmoothingEnabled = true; ctx.drawImage(renderer.domElement, feet.x - scrW * 0.5, feet.y - scrH * 0.88, scrW, scrH); ctx.restore(); void zoom;
+  // Grid facing only: model turns with u.dir. Portrait camera stays fixed so map yaw never spins the unit.
+  t.parts.root.rotation.set(0, dirAngle(u.dir), 0); placeCamera(0, PORTRAIT_PITCH); renderer.render(scene, camera);
+  ctx.save(); ctx.imageSmoothingEnabled = true; ctx.drawImage(renderer.domElement, feet.x - scrW * 0.5, feet.y - scrH * 0.88, scrW, scrH); ctx.restore(); void zoom; void camYaw;
 }
 export function precacheRigs(): void { if (!ensureGL()) return; const all: Archetype[] = ["mara", "dana", "priya", "hale", "crosby", "beckett", "delinquent", "magician", "wolverine", "boxer", "gunner", "worker", "official"]; for (const a of all) for (const g of ["f", "m"] as Gender[]) template(a, g); }
 export function meshTris(a: Archetype, g: Gender): number { return template(a, g).parts.tris; }
