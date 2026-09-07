@@ -110,6 +110,11 @@ export class Renderer {
   private mapW = 10;
   private mapH = 12;
   private readonly kingsWharf = new Image();
+  private readonly mapDolls: Record<"mara" | "dana" | "priya", HTMLImageElement> = {
+    mara: new Image(),
+    dana: new Image(),
+    priya: new Image(),
+  };
 
   tileH(): number {
     return TILE_W * Math.sin((this.pitch * Math.PI) / 180);
@@ -140,6 +145,10 @@ export class Renderer {
     this.ctx = ctx;
     this.kingsWharf.decoding = "async";
     this.kingsWharf.src = "./sprites/scene-kings-wharf.png";
+    for (const [archetype, image] of Object.entries(this.mapDolls)) {
+      image.decoding = "async";
+      image.src = `./sprites/${archetype}.png`;
+    }
     this.resize();
   }
 
@@ -1000,6 +1009,27 @@ export class Renderer {
     };
   }
 
+  private drawMapDoll(
+    image: HTMLImageElement,
+    x: number,
+    feetY: number,
+    z: number,
+    face: Vec2,
+    elite: boolean,
+  ): void {
+    const dh = rigDrawHeight(z) * (elite ? 1.12 : 1);
+    const dw = dh * image.naturalWidth / image.naturalHeight;
+    const ctx = this.ctx;
+    ctx.save();
+    ctx.translate(x - dw / 2, feetY - dh);
+    if (face.x - face.y < 0) {
+      ctx.translate(dw, 0);
+      ctx.scale(-1, 1);
+    }
+    ctx.drawImage(image, 0, 0, dw, dh);
+    ctx.restore();
+  }
+
   private drawUnit(u: Unit, map: GameMap, overlays: DrawOverlays): void {
     const ctx = this.ctx;
     const h = map.heightAt(u.x, u.y);
@@ -1049,7 +1079,15 @@ export class Renderer {
       const q = project(lx, ly, lz);
       return { x: q.x + dx, y: q.y + dy, d: q.d };
     };
-    drawRig(ctx, shifted, u, this.time, z, this.yaw);
+    const dollArchetype = u.archetype === "mara" || u.archetype === "dana" || u.archetype === "priya"
+      ? u.archetype
+      : null;
+    const doll = dollArchetype ? this.mapDolls[dollArchetype] : null;
+    if (doll && doll.complete && doll.naturalWidth > 0 && doll.naturalHeight > 0) {
+      this.drawMapDoll(doll, x, feetY, z, face, elite);
+    } else {
+      drawRig(ctx, shifted, u, this.time, z, this.yaw);
+    }
 
     this.drawFacingWedge(u, map, x, feetY, z);
 
