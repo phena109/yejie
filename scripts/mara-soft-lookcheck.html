@@ -1,0 +1,16 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Mara soft cloth lookcheck</title>
+<style>
+:root{color-scheme:dark}*{box-sizing:border-box}html,body{margin:0;background:#071321;color:#edf7ff;font:15px Arial,sans-serif}body{padding:22px}.board{border:1px solid #2b5879;background:#0b1b2e;padding:18px}h1{margin:0 0 4px;color:#58e7df;font-size:22px;letter-spacing:3px}.sub{color:#91b5d1;margin-bottom:15px}.grid{display:grid;grid-template-columns:minmax(430px,1fr) minmax(430px,1fr);gap:14px}.panel{position:relative;border:1px solid #274d6b;background:#142a43;overflow:hidden}.panel h2{position:absolute;z-index:2;top:12px;left:14px;margin:0;color:#9deee9;font-size:16px;letter-spacing:2px}.panel p{position:absolute;z-index:2;left:14px;bottom:10px;margin:0;max-width:92%;color:#b2cce0;font-size:13px}canvas{display:block;width:100%;height:100%}.front{height:850px}.torso{height:760px}@media(max-width:900px){body{padding:8px}.grid{grid-template-columns:1fr}}
+</style></head>
+<body><main class="board"><h1>MARA · SOFT CLOTH + HANDS</h1><div class="sub">Current buildMaraSoft() mesh — folds, collar, necktie, pouches, patches, and open fingered hands</div><section class="grid">
+<article class="panel front"><h2>FRONT · SOFT VOLUME</h2><canvas id="front"></canvas><p>Uniform folds, collar + tie, badge, waist pouches, shoulder patches, and distinct fingertips.</p></article>
+<article class="panel torso"><h2>TORSO · CLOTH DETAILS</h2><canvas id="torso"></canvas><p>Chest folds, collar/tie, badge, pouch volume, patches, cuffs, palms, and fingers.</p></article>
+</section></main><script type="module">
+import * as THREE from "three";
+import { buildMaraSoft } from "../src/game/maraSoft.ts";
+const model=buildMaraSoft().root;const scene=new THREE.Scene();scene.background=new THREE.Color(0x142a43);scene.add(new THREE.HemisphereLight(0xbadfff,0x18243a,2.3));const key=new THREE.DirectionalLight(0xffffff,3.2);key.position.set(-2,4,6);scene.add(key);const fill=new THREE.DirectionalLight(0x6ea9ff,1.4);fill.position.set(3,1,2);scene.add(fill);scene.add(model);
+const box=new THREE.Box3().setFromObject(model);const center=box.getCenter(new THREE.Vector3());const size=box.getSize(new THREE.Vector3());const fullTarget=new THREE.Vector3(center.x,center.y+0.03,center.z);const torsoTarget=new THREE.Vector3(center.x,center.y+0.20,center.z+0.03);
+function renderCanvas(canvas,target,span){const renderer=new THREE.WebGLRenderer({canvas,antialias:true,preserveDrawingBuffer:true});renderer.setPixelRatio(1);renderer.outputColorSpace=THREE.SRGBColorSpace;renderer.toneMapping=THREE.ACESFilmicToneMapping;renderer.toneMappingExposure=1.15;const w=canvas.clientWidth||600,h=canvas.clientHeight||700;renderer.setSize(w,h,false);const aspect=w/h;const camera=new THREE.OrthographicCamera(-span*aspect,span*aspect,span,-span,0.1,100);camera.position.set(0,target.y,8);camera.lookAt(target);renderer.render(scene,camera)}
+requestAnimationFrame(()=>{renderCanvas(document.querySelector("#front"),fullTarget,Math.max(size.y*0.58,1.8));renderCanvas(document.querySelector("#torso"),torsoTarget,1.05);document.body.dataset.ready="true"});
+</script></body></html>
