@@ -125,11 +125,15 @@ export class Renderer {
     left: new Image(),
     nw: new Image(),
   };
-  private readonly danaAngles: Record<"front" | "right" | "back" | "left", HTMLImageElement> = {
+  private readonly danaAngles: Record<"front" | "ne" | "right" | "se" | "back" | "sw" | "left" | "nw", HTMLImageElement> = {
     front: new Image(),
+    ne: new Image(),
     right: new Image(),
+    se: new Image(),
     back: new Image(),
+    sw: new Image(),
     left: new Image(),
+    nw: new Image(),
   };
 
   tileH(): number {
@@ -1110,10 +1114,9 @@ export class Renderer {
       // Mara is the authored soft mesh; Dana and Priya remain sprite billboards.
       drawRig(ctx, shifted, u, this.time, z, this.yaw);
     } else if (u.archetype === "dana") {
-      // Dana Step 1 has four painted cardinal angles. Grid-facing 8-way dirs
-      // choose the nearest painted angle: 0/1 front, 2/3 right, 4/5 back,
-      // 6/7 left. Painted left/right sprites are never billboard-mirrored.
-      const angle = u.dir <= 1 ? "front" : u.dir <= 3 ? "right" : u.dir <= 5 ? "back" : "left";
+      // Dana painted turnaround is keyed to grid facing, not camera yaw:
+      // 0 N/front, 1 NE, 2 E/right, 3 SE, 4 S/back, 5 SW, 6 W/left, 7 NW.
+      const angle = (["front", "ne", "right", "se", "back", "sw", "left", "nw"] as const)[u.dir];
       const painted = this.danaAngles[angle];
       const fallback = this.mapDolls.dana;
       if (painted.complete && painted.naturalWidth > 0 && painted.naturalHeight > 0) {
