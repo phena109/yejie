@@ -67,7 +67,7 @@ function hairShell(): THREE.BufferGeometry {
   const cap = new THREE.LatheGeometry([
     new THREE.Vector2(0.22, -0.43), new THREE.Vector2(0.31, -0.39), new THREE.Vector2(0.39, -0.28),
     new THREE.Vector2(0.43, -0.10), new THREE.Vector2(0.44, 0.13), new THREE.Vector2(0.41, 0.31),
-    new THREE.Vector2(0.34, 0.42), new THREE.Vector2(0.22, 0.47),
+    new THREE.Vector2(0.34, 0.42), new THREE.Vector2(0.22, 0.47), new THREE.Vector2(0, 0.48),
   ], 40);
   cap.applyMatrix4(new THREE.Matrix4().makeScale(1.05, 1, 0.84)); cap.applyMatrix4(new THREE.Matrix4().makeTranslation(0, 0, -0.075)); cap.computeVertexNormals();
   const merged = mergeGeometries([cap, bangGeometry()], false); if (!merged) throw new Error("Mara hair geometry merge failed");
