@@ -17,7 +17,7 @@ export interface MaraSoftParts {
 interface SoftMats {
   skin: THREE.MeshStandardMaterial; shadow: THREE.MeshStandardMaterial; hair: THREE.MeshStandardMaterial;
   uniform: THREE.MeshStandardMaterial; pants: THREE.MeshStandardMaterial; accent: THREE.MeshStandardMaterial;
-  belt: THREE.MeshStandardMaterial; boot: THREE.MeshStandardMaterial; eyeWhite: THREE.MeshStandardMaterial;
+  belt: THREE.MeshStandardMaterial; boot: THREE.MeshStandardMaterial; glove: THREE.MeshStandardMaterial; glovePad: THREE.MeshStandardMaterial; eyeWhite: THREE.MeshStandardMaterial;
   eyeBlue: THREE.MeshStandardMaterial; eyeDark: THREE.MeshStandardMaterial;
 }
 
@@ -28,7 +28,7 @@ function materials(): SoftMats {
   return {
     skin: mat(0xc69476, 0.82), shadow: mat(0x9d6d55, 0.88), hair: mat(0x202c48, 0.68),
     uniform: mat(0x214d78, 0.76), pants: mat(0x182236, 0.84), accent: mat(0xe0bd4c, 0.58),
-    belt: mat(0x171b28, 0.9), boot: mat(0x111722, 0.9), eyeWhite: mat(0xf7f4ed, 0.62),
+    belt: mat(0x171b28, 0.9), boot: mat(0x111722, 0.9), glove: mat(0x11161d, 0.88), glovePad: mat(0x252d35, 0.78), eyeWhite: mat(0xf7f4ed, 0.62),
     eyeBlue: mat(0x3b9bd4, 0.5), eyeDark: mat(0x10182d, 0.7),
   };
 }
@@ -44,6 +44,33 @@ function roundedFoot(material: THREE.Material): THREE.Mesh {
 }
 
 // A broad, softly bowed fringe carries the bob into the forehead without a visor rim.
+// Mara hands stay open and relaxed: skin fingertips remain distinct beneath a soft fingerless glove.
+function hand(arm: THREE.Group, m: SoftMats, side: -1 | 1): void {
+  const palm = new THREE.Mesh(new THREE.SphereGeometry(1, 24, 16), m.skin);
+  palm.scale.set(0.135, 0.155, 0.105); add(arm, palm, 0, -0.52, 0.015);
+
+  const cuff = new THREE.Mesh(new THREE.CapsuleGeometry(0.105, 0.045, 6, 18), m.glove);
+  cuff.scale.z = 0.82; add(arm, cuff, 0, -0.39, 0.02);
+  const strap = new THREE.Mesh(new THREE.CapsuleGeometry(0.102, 0.035, 5, 16), m.glovePad);
+  strap.scale.set(1, 1, 0.78); add(arm, strap, 0, -0.405, 0.085);
+
+  const backPad = new THREE.Mesh(new THREE.SphereGeometry(1, 24, 16), m.glove);
+  backPad.scale.set(0.12, 0.112, 0.095); add(arm, backPad, 0, -0.495, 0.085);
+  const padInset = new THREE.Mesh(new THREE.SphereGeometry(1, 20, 14), m.glovePad);
+  padInset.scale.set(0.078, 0.045, 0.018); add(arm, padInset, 0, -0.46, 0.178);
+
+  const fingers: Array<[number, number, number]> = [
+    [-0.09, 0.125, 0.037], [-0.03, 0.145, 0.040], [0.03, 0.14, 0.040], [0.09, 0.115, 0.037],
+  ];
+  for (const [x, length, radius] of fingers) {
+    const finger = new THREE.Mesh(new THREE.CapsuleGeometry(radius, length, 6, 14), m.skin);
+    add(arm, finger, x, -0.635 - (0.14 - length) * 0.18, 0.025);
+  }
+
+  const thumb = new THREE.Mesh(new THREE.CapsuleGeometry(0.041, 0.115, 6, 14), m.skin);
+  thumb.rotation.z = -side * 0.72;
+  add(arm, thumb, side * 0.145, -0.575, 0.035);
+}
 function bangGeometry(): THREE.BufferGeometry {
   const geometry = new THREE.SphereGeometry(1, 32, 18);
   geometry.scale(0.36, 0.13, 0.12); geometry.translate(0, 0.29, 0.39);
@@ -120,7 +147,7 @@ export function buildMaraSoft(): MaraSoftParts {
   for (const [arm, x] of [[armL, -0.375], [armR, 0.375]] as const) {
     arm.position.set(x, 0.43, 0); add(arm, lathe(m.uniform, [[0.075, -0.18], [0.105, -0.12], [0.11, 0.03], [0.085, 0.12]], 32), 0, -0.10, 0);
     add(arm, lathe(m.skin, [[0.055, -0.43], [0.082, -0.36], [0.085, -0.23], [0.068, -0.16]], 32), 0, -0.10, 0);
-    add(arm, lathe(m.skin, [[0.045, -0.52], [0.075, -0.48], [0.08, -0.40], [0.05, -0.34], [0, -0.30]], 28), 0, -0.10, 0); torso.add(arm);
+    hand(arm, m, x < 0 ? -1 : 1); torso.add(arm);
   }
   armR.add(weap); weap.position.set(0, -0.43, 0.13);
   add(weap, lathe(m.belt, [[0.035, -0.32], [0.05, -0.25], [0.052, 0.24], [0.035, 0.32]], 20), 0, -0.17, 0);
