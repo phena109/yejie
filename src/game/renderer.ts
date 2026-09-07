@@ -115,6 +115,12 @@ export class Renderer {
     dana: new Image(),
     priya: new Image(),
   };
+  private readonly maraAngles: Record<"front" | "right" | "back" | "left", HTMLImageElement> = {
+    front: new Image(),
+    right: new Image(),
+    back: new Image(),
+    left: new Image(),
+  };
 
   tileH(): number {
     return TILE_W * Math.sin((this.pitch * Math.PI) / 180);
@@ -148,6 +154,10 @@ export class Renderer {
     for (const [archetype, image] of Object.entries(this.mapDolls)) {
       image.decoding = "async";
       image.src = `./sprites/${archetype}.png`;
+    }
+    for (const [angle, image] of Object.entries(this.maraAngles)) {
+      image.decoding = "async";
+      image.src = `./sprites/mara-${angle}.png`;
     }
     this.resize();
   }
@@ -1016,13 +1026,14 @@ export class Renderer {
     z: number,
     face: Vec2,
     elite: boolean,
+    mirror = true,
   ): void {
     const dh = rigDrawHeight(z) * (elite ? 1.12 : 1);
     const dw = dh * image.naturalWidth / image.naturalHeight;
     const ctx = this.ctx;
     ctx.save();
     ctx.translate(x - dw / 2, feetY - dh);
-    if (face.x - face.y < 0) {
+    if (mirror && face.x - face.y < 0) {
       ctx.translate(dw, 0);
       ctx.scale(-1, 1);
     }
@@ -1079,11 +1090,19 @@ export class Renderer {
       const q = project(lx, ly, lz);
       return { x: q.x + dx, y: q.y + dy, d: q.d };
     };
+    // Mara's painted turnaround is keyed to the unit's grid facing, not camera yaw:
+    // N (0) -> front, E (1) -> right, S (2) -> back, W (3) -> left.
+    const maraAngle = u.dir === 0 ? "front" : u.dir === 1 ? "right" : u.dir === 2 ? "back" : "left";
     const dollArchetype = u.archetype === "mara" || u.archetype === "dana" || u.archetype === "priya"
       ? u.archetype
       : null;
     const doll = dollArchetype ? this.mapDolls[dollArchetype] : null;
-    if (doll && doll.complete && doll.naturalWidth > 0 && doll.naturalHeight > 0) {
+    const maraDoll = u.archetype === "mara" ? this.maraAngles[maraAngle] : null;
+    if (maraDoll && maraDoll.complete && maraDoll.naturalWidth > 0 && maraDoll.naturalHeight > 0) {
+      // These assets already encode left/right as painted; never billboard-flip them.
+      this.drawMapDoll(maraDoll, x, feetY, z, face, elite, false);
+    } else if (doll && doll.complete && doll.naturalWidth > 0 && doll.naturalHeight > 0) {
+      // Dana and Priya retain their original single-sprite billboard behavior.
       this.drawMapDoll(doll, x, feetY, z, face, elite);
     } else {
       drawRig(ctx, shifted, u, this.time, z, this.yaw);
