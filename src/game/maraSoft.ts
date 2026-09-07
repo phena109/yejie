@@ -43,34 +43,33 @@ function roundedFoot(material: THREE.Material): THREE.Mesh {
   foot.scale.set(1, 0.62, 1.45); return foot;
 }
 
-// A shallow authored curtain gives the bob a continuous, readable bang shelf.
+// A broad, softly bowed fringe carries the bob into the forehead without a visor rim.
 function bangGeometry(): THREE.BufferGeometry {
-  const cols = 18; const rows = 7; const width = 0.34; const top = 0.34; const bottom = 0.03;
-  const positions: number[] = []; const uvs: number[] = [];
-  for (let row = 0; row <= rows; row++) {
-    const t = row / rows; const y = top + (bottom - top) * t;
-    for (let col = 0; col <= cols; col++) {
-      const x = -width + (2 * width * col) / cols; const edge = Math.abs(x / width);
-      const wave = 0.018 * Math.cos(x * 18) * (0.35 + 0.65 * edge);
-      positions.push(x, y, 0.30 + 0.035 * (1 - edge * edge) + wave - 0.018 * t); uvs.push(col / cols, 1 - t);
-    }
-  }
-  const indices: number[] = []; const stride = cols + 1;
-  for (let row = 0; row < rows; row++) for (let col = 0; col < cols; col++) {
-    const a = row * stride + col; const b = a + 1; const c = a + stride; const d = c + 1;
-    indices.push(a, c, b, b, c, d);
-  }
-  const geometry = new THREE.BufferGeometry(); geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3)); geometry.setAttribute("uv", new THREE.Float32BufferAttribute(uvs, 2));
-  geometry.setIndex(indices); geometry.computeVertexNormals(); return geometry;
+  const geometry = new THREE.SphereGeometry(1, 32, 18);
+  geometry.scale(0.36, 0.13, 0.12); geometry.translate(0, 0.29, 0.39);
+  geometry.computeVertexNormals(); return geometry.toNonIndexed();
 }
+
+// Rounded cheek-length locks overlap the cap edge so the face meets hair as a mass,
+// not as skin showing through an oval window. Their ends stay soft like a bob.
+function sideFallGeometry(side: -1 | 1): THREE.BufferGeometry {
+  const geometry = new THREE.CapsuleGeometry(0.105, 0.46, 7, 18);
+  geometry.applyMatrix4(new THREE.Matrix4().makeRotationZ(side * 0.045));
+  geometry.applyMatrix4(new THREE.Matrix4().makeTranslation(side * 0.35, -0.03, 0.36));
+  geometry.computeVertexNormals(); return geometry.toNonIndexed();
+}
+
 function hairShell(): THREE.BufferGeometry {
   const cap = new THREE.LatheGeometry([
     new THREE.Vector2(0.22, -0.43), new THREE.Vector2(0.31, -0.39), new THREE.Vector2(0.39, -0.28),
     new THREE.Vector2(0.43, -0.10), new THREE.Vector2(0.44, 0.13), new THREE.Vector2(0.41, 0.31),
     new THREE.Vector2(0.34, 0.42), new THREE.Vector2(0.22, 0.47), new THREE.Vector2(0, 0.48),
   ], 40);
-  cap.applyMatrix4(new THREE.Matrix4().makeScale(1.05, 1, 0.84)); cap.applyMatrix4(new THREE.Matrix4().makeTranslation(0, 0, -0.075)); cap.computeVertexNormals();
-  const merged = mergeGeometries([cap, bangGeometry()], false); if (!merged) throw new Error("Mara hair geometry merge failed");
+  // Keep the full lathed crown: this seals the top and wraps the back of the bob.
+  cap.applyMatrix4(new THREE.Matrix4().makeScale(1.05, 1, 0.84));
+  cap.applyMatrix4(new THREE.Matrix4().makeTranslation(0, 0, -0.075)); cap.computeVertexNormals();
+  const merged = mergeGeometries([cap.toNonIndexed(), bangGeometry(), sideFallGeometry(-1), sideFallGeometry(1)], false);
+  if (!merged) throw new Error("Mara hair geometry merge failed");
   merged.computeVertexNormals(); return merged;
 }
 
