@@ -115,11 +115,15 @@ export class Renderer {
     dana: new Image(),
     priya: new Image(),
   };
-  private readonly maraAngles: Record<"front" | "right" | "back" | "left", HTMLImageElement> = {
+  private readonly maraAngles: Record<"front" | "ne" | "right" | "se" | "back" | "sw" | "left" | "nw", HTMLImageElement> = {
     front: new Image(),
+    ne: new Image(),
     right: new Image(),
+    se: new Image(),
     back: new Image(),
+    sw: new Image(),
     left: new Image(),
+    nw: new Image(),
   };
 
   tileH(): number {
@@ -1090,9 +1094,9 @@ export class Renderer {
       const q = project(lx, ly, lz);
       return { x: q.x + dx, y: q.y + dy, d: q.d };
     };
-    // Mara's painted turnaround is keyed to the unit's grid facing, not camera yaw:
-    // N (0) -> front, E (1) -> right, S (2) -> back, W (3) -> left.
-    const maraAngle = u.dir === 0 ? "front" : u.dir === 1 ? "right" : u.dir === 2 ? "back" : "left";
+    // Mara's painted turnaround is keyed to grid facing, not camera yaw:
+    // 0 N/front, 1 NE, 2 E/right, 3 SE, 4 S/back, 5 SW, 6 W/left, 7 NW.
+    const maraAngle = (["front", "ne", "right", "se", "back", "sw", "left", "nw"] as const)[u.dir];
     const dollArchetype = u.archetype === "mara" || u.archetype === "dana" || u.archetype === "priya"
       ? u.archetype
       : null;

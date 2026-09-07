@@ -36,6 +36,8 @@ export function computeMoveRange(unit: Unit, map: GameMap, units: Unit[]): MoveF
       const nx = cur.x + d.x;
       const ny = cur.y + d.y;
       if (!map.walkable(nx, ny)) continue;
+      // Do not cut through a blocked corner when taking a diagonal step.
+      if (d.x !== 0 && d.y !== 0 && (!map.walkable(cur.x + d.x, cur.y) || !map.walkable(cur.x, cur.y + d.y))) continue;
       const h1 = map.heightAt(nx, ny);
       const dh = h1 - h0;
       if (Math.abs(dh) > unit.jmp) continue;

@@ -41,7 +41,8 @@ function activeClip(u: Unit, now: number): { clip: AnimClip; t: number } {
 
 /** Local +Y is the unit's forward direction, matching DIRS in types.ts. */
 function rotFacing(x: number, y: number, dir: Dir): { x: number; y: number } {
-  switch (dir) { case 0: return { x, y: -y }; case 1: return { x: y, y: x }; case 2: return { x: -x, y }; case 3: return { x: -y, y: -x }; }
+  const f = [{ x: 0, y: -1 }, { x: 1, y: -1 }, { x: 1, y: 0 }, { x: 1, y: 1 }, { x: 0, y: 1 }, { x: -1, y: 1 }, { x: -1, y: 0 }, { x: -1, y: -1 }][dir];
+  return { x: -f.y * x + f.x * y, y: f.x * x + f.y * y };
 }
 export function localToGrid(lx: number, ly: number, dir: Dir): { x: number; y: number } { return rotFacing(lx, ly, dir); }
 export function rigDrawHeight(zoom: number): number { return 58 * zoom; }
@@ -188,7 +189,7 @@ function ensureGL(): boolean {
     scene = new THREE.Scene(); const aspect = 192 / 240; camera = new THREE.OrthographicCamera(-1.35 * aspect, 1.35 * aspect, 1.35, -1.35, 0.1, 40); stage = new THREE.Group(); scene.add(stage); scene.add(new THREE.HemisphereLight(0xfff3df, 0x222844, 1.35)); const key = new THREE.DirectionalLight(0xffe7c7, 1.7); key.position.set(3.5, 6, 4.5); scene.add(key); const fill = new THREE.DirectionalLight(0x93b5ff, 0.65); fill.position.set(-4, 2, -3); scene.add(fill); glReady = true; return true;
   } catch { return false; }
 }
-function dirAngle(dir: Dir): number { return dir * Math.PI / 2; }
+function dirAngle(dir: Dir): number { return dir * Math.PI / 4; }
 const PORTRAIT_PITCH = 30;
 function placeCamera(yaw: number, pitchDeg: number): void { if (!camera) return; const pitch = pitchDeg * Math.PI / 180; const d = 4.2; const cp = Math.cos(pitch); const sp = Math.sin(pitch); camera.position.set(Math.sin(yaw) * cp * d, sp * d + 0.85, Math.cos(yaw) * cp * d); camera.lookAt(0, 0.88, 0); camera.updateProjectionMatrix(); }
 export function drawRig(ctx: CanvasRenderingContext2D, project: ProjectFn, u: Unit, now: number, zoom: number, camYaw = 0): void {
