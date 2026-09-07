@@ -1,5 +1,6 @@
 import * as THREE from "three";
 import type { AnimClip, Archetype, Dir, Gender, Unit } from "./types";
+import { buildMaraSoft } from "./maraSoft";
 
 export interface Proj { x: number; y: number; d: number }
 export type ProjectFn = (lx: number, ly: number, lz: number) => Proj;
@@ -170,7 +171,7 @@ function wolverine(): RigParts {
 }
 interface Template { parts: RigParts }
 const templates = new Map<string, Template>();
-function template(a: Archetype, g: Gender): Template { const k = `${a}:${g}`; const old = templates.get(k); if (old) return old; const result = { parts: a === "wolverine" ? wolverine() : humanoid(a, g) }; templates.set(k, result); return result; }
+function template(a: Archetype, g: Gender): Template { const k = `${a}:${g}`; const old = templates.get(k); if (old) return old; const result = { parts: a === "mara" ? buildMaraSoft() : a === "wolverine" ? wolverine() : humanoid(a, g) }; templates.set(k, result); return result; }
 function pose(p: RigParts, a: Archetype, clip: AnimClip, t: number, now: number): void {
   const { hip, torso, head, armL, armR, legL, legR, weap } = p;
   for (const part of [hip, torso, head, armL, armR, legL, legR, weap]) part.rotation.set(0, 0, 0);

@@ -1096,20 +1096,14 @@ export class Renderer {
     };
     // Mara's painted turnaround is keyed to grid facing, not camera yaw:
     // 0 N/front, 1 NE, 2 E/right, 3 SE, 4 S/back, 5 SW, 6 W/left, 7 NW.
-    const maraAngle = (["front", "ne", "right", "se", "back", "sw", "left", "nw"] as const)[u.dir];
-    const dollArchetype = u.archetype === "mara" || u.archetype === "dana" || u.archetype === "priya"
-      ? u.archetype
-      : null;
-    const doll = dollArchetype ? this.mapDolls[dollArchetype] : null;
-    const maraDoll = u.archetype === "mara" ? this.maraAngles[maraAngle] : null;
-    if (maraDoll && maraDoll.complete && maraDoll.naturalWidth > 0 && maraDoll.naturalHeight > 0) {
-      // These assets already encode left/right as painted; never billboard-flip them.
-      this.drawMapDoll(maraDoll, x, feetY, z, face, elite, false);
-    } else if (doll && doll.complete && doll.naturalWidth > 0 && doll.naturalHeight > 0) {
-      // Dana and Priya retain their original single-sprite billboard behavior.
-      this.drawMapDoll(doll, x, feetY, z, face, elite);
-    } else {
+    if (u.archetype === "mara") {
+      // Mara is the authored soft mesh; Dana and Priya remain sprite billboards.
       drawRig(ctx, shifted, u, this.time, z, this.yaw);
+    } else {
+      const dollArchetype = u.archetype === "dana" || u.archetype === "priya" ? u.archetype : null;
+      const doll = dollArchetype ? this.mapDolls[dollArchetype] : null;
+      if (doll && doll.complete && doll.naturalWidth > 0 && doll.naturalHeight > 0) this.drawMapDoll(doll, x, feetY, z, face, elite);
+      else drawRig(ctx, shifted, u, this.time, z, this.yaw);
     }
 
     this.drawFacingWedge(u, map, x, feetY, z);
