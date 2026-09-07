@@ -16,7 +16,7 @@ export interface MaraSoftParts {
 
 interface SoftMats {
   skin: THREE.MeshStandardMaterial; shadow: THREE.MeshStandardMaterial; hair: THREE.MeshStandardMaterial;
-  uniform: THREE.MeshStandardMaterial; pants: THREE.MeshStandardMaterial; accent: THREE.MeshStandardMaterial;
+  uniform: THREE.MeshStandardMaterial; uniformLight: THREE.MeshStandardMaterial; uniformDeep: THREE.MeshStandardMaterial; pants: THREE.MeshStandardMaterial; accent: THREE.MeshStandardMaterial;
   belt: THREE.MeshStandardMaterial; boot: THREE.MeshStandardMaterial; glove: THREE.MeshStandardMaterial; glovePad: THREE.MeshStandardMaterial; eyeWhite: THREE.MeshStandardMaterial;
   eyeBlue: THREE.MeshStandardMaterial; eyeDark: THREE.MeshStandardMaterial;
 }
@@ -27,7 +27,7 @@ function mat(color: number, roughness = 0.75, metalness = 0): THREE.MeshStandard
 function materials(): SoftMats {
   return {
     skin: mat(0xc69476, 0.82), shadow: mat(0x9d6d55, 0.88), hair: mat(0x202c48, 0.68),
-    uniform: mat(0x214d78, 0.76), pants: mat(0x182236, 0.84), accent: mat(0xe0bd4c, 0.58),
+    uniform: mat(0x214d78, 0.76), uniformLight: mat(0x315f8b, 0.68), uniformDeep: mat(0x142f50, 0.84), pants: mat(0x182236, 0.84), accent: mat(0xe0bd4c, 0.58),
     belt: mat(0x171b28, 0.9), boot: mat(0x111722, 0.9), glove: mat(0x11161d, 0.88), glovePad: mat(0x252d35, 0.78), eyeWhite: mat(0xf7f4ed, 0.62),
     eyeBlue: mat(0x3b9bd4, 0.5), eyeDark: mat(0x10182d, 0.7),
   };
@@ -122,8 +122,26 @@ function face(head: THREE.Group, m: SoftMats): void {
   const mouth = new THREE.Mesh(new THREE.TorusGeometry(0.065, 0.009, 6, 18, Math.PI), m.shadow); mouth.rotation.set(Math.PI / 2, 0, Math.PI); add(head, mouth, 0, -0.15, 0.346);
 }
 function badge(torso: THREE.Group, m: SoftMats): void {
-  const disk = new THREE.Mesh(new THREE.CylinderGeometry(0.072, 0.072, 0.018, 24), m.accent); disk.rotation.x = Math.PI / 2; add(torso, disk, 0.13, 0.39, 0.295);
-  const star = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, 0.022, 5), m.belt); star.rotation.set(Math.PI / 2, 0, Math.PI / 4); add(torso, star, 0.13, 0.39, 0.307);
+  const backing = new THREE.Mesh(new THREE.CylinderGeometry(0.102, 0.102, 0.018, 28), m.belt); backing.rotation.x = Math.PI / 2; add(torso, backing, 0.13, 0.39, 0.292);
+  const disk = new THREE.Mesh(new THREE.CylinderGeometry(0.086, 0.086, 0.022, 28), m.accent); disk.rotation.x = Math.PI / 2; add(torso, disk, 0.13, 0.39, 0.309);
+  const star = new THREE.Mesh(new THREE.CylinderGeometry(0.038, 0.038, 0.026, 5), m.belt); star.rotation.set(Math.PI / 2, 0, Math.PI / 4); add(torso, star, 0.13, 0.39, 0.325);
+}
+function softFold(parent: THREE.Group, material: THREE.Material, x: number, y: number, angle: number, length = 0.13): void {
+  const fold = new THREE.Mesh(new THREE.CapsuleGeometry(0.018, length, 6, 12), material);
+  fold.scale.z = 0.62; fold.rotation.z = angle; add(parent, fold, x, y, 0.292);
+}
+function collarPanel(material: THREE.Material, side: -1 | 1): THREE.Mesh {
+  const shape = new THREE.Shape(); shape.moveTo(0, 0.06); shape.lineTo(side * 0.135, 0.085); shape.lineTo(side * 0.045, -0.055); shape.lineTo(0, -0.015); shape.closePath();
+  return new THREE.Mesh(new THREE.ShapeGeometry(shape), material);
+}
+function pouch(material: THREE.Material): THREE.Mesh {
+  return lathe(material, [[0.045, -0.065], [0.068, -0.052], [0.078, -0.025], [0.078, 0.038], [0.062, 0.064], [0.038, 0.068]], 20);
+}
+function shoulderPatch(arm: THREE.Group, m: SoftMats): void {
+  const base = new THREE.Mesh(new THREE.CapsuleGeometry(0.052, 0.068, 5, 12), m.belt);
+  base.scale.z = 0.16; add(arm, base, 0, -0.105, 0.108);
+  const stripe = new THREE.Mesh(new THREE.BoxGeometry(0.052, 0.012, 0.012), m.accent);
+  add(arm, stripe, 0, -0.105, 0.124);
 }
 function countTris(root: THREE.Object3D): number {
   let n = 0;
@@ -141,11 +159,28 @@ export function buildMaraSoft(): MaraSoftParts {
   }
   add(hip, lathe(m.pants, [[0.20, -0.10], [0.275, -0.04], [0.28, 0.04], [0.235, 0.12]], 36), 0, -0.01, 0); hip.add(torso); torso.position.y = 0.03;
   add(torso, lathe(m.uniform, [[0.18, 0.02], [0.265, 0.10], [0.30, 0.28], [0.285, 0.48], [0.23, 0.61], [0.12, 0.65]], 40), 0, 0.04, 0);
+  for (const side of [-1, 1] as const) {
+    const shoulder = new THREE.Mesh(new THREE.SphereGeometry(1, 20, 14), m.uniformLight); shoulder.scale.set(0.13, 0.105, 0.13); add(torso, shoulder, side * 0.255, 0.48, 0.015);
+    const sideFold = new THREE.Mesh(new THREE.CapsuleGeometry(0.022, 0.13, 6, 12), m.uniformDeep); sideFold.scale.z = 0.55; sideFold.rotation.z = -side * 0.36; add(torso, sideFold, side * 0.225, 0.37, 0.286);
+  }
+  softFold(torso, m.uniformDeep, -0.205, 0.42, -0.52, 0.14); softFold(torso, m.uniformLight, -0.19, 0.39, -0.52, 0.10);
+  softFold(torso, m.uniformDeep, 0.205, 0.42, 0.52, 0.14); softFold(torso, m.uniformLight, 0.19, 0.39, 0.52, 0.10);
+  softFold(torso, m.uniformDeep, -0.14, 0.19, 0.20, 0.13); softFold(torso, m.uniformDeep, 0.14, 0.19, -0.20, 0.13);
   add(torso, lathe(m.belt, [[0.255, 0.00], [0.285, 0.035], [0.278, 0.085], [0.25, 0.11]], 36), 0, 0, 0);
-  const buckle = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.10, 0.035, 3, 3, 2), m.accent); add(torso, buckle, 0, 0.065, 0.285); badge(torso, m);
-  const collar = lathe(m.belt, [[0.09, -0.03], [0.14, 0], [0.15, 0.07], [0.08, 0.10]], 28); add(torso, collar, 0, 0.57, 0.015);
+  const buckle = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.10, 0.035, 3, 3, 2), m.accent); add(torso, buckle, 0, 0.065, 0.285);
+  for (const side of [-1, 1] as const) {
+    const beltPouch = pouch(m.belt); add(torso, beltPouch, side * 0.205, 0.068, 0.292);
+    const flap = new THREE.Mesh(new THREE.CapsuleGeometry(0.045, 0.055, 5, 12), m.glovePad); flap.scale.set(1.15, 0.34, 0.16); add(torso, flap, side * 0.205, 0.105, 0.365);
+    const button = new THREE.Mesh(new THREE.SphereGeometry(0.012, 12, 8), m.accent); add(torso, button, side * 0.205, 0.105, 0.383);
+  }
+  const radio = pouch(m.belt); radio.scale.set(0.72, 1.12, 0.82); add(torso, radio, 0.30, 0.105, 0.12);
+  const radioCap = new THREE.Mesh(new THREE.BoxGeometry(0.065, 0.018, 0.018), m.accent); add(torso, radioCap, 0.30, 0.168, 0.18);
+  badge(torso, m);
+  for (const side of [-1, 1] as const) { const panel = collarPanel(m.uniformLight, side); add(torso, panel, 0, 0.575, 0.301); }
+  const knot = new THREE.Mesh(new THREE.CapsuleGeometry(0.047, 0.035, 5, 12), m.belt); knot.scale.z = 0.34; add(torso, knot, 0, 0.515, 0.318);
+  const tie = new THREE.Mesh(new THREE.CapsuleGeometry(0.038, 0.205, 5, 12), m.belt); tie.scale.z = 0.30; add(torso, tie, 0, 0.395, 0.315);
   for (const [arm, x] of [[armL, -0.375], [armR, 0.375]] as const) {
-    arm.position.set(x, 0.43, 0); add(arm, lathe(m.uniform, [[0.075, -0.18], [0.105, -0.12], [0.11, 0.03], [0.085, 0.12]], 32), 0, -0.10, 0);
+    arm.position.set(x, 0.43, 0); add(arm, lathe(m.uniform, [[0.075, -0.18], [0.105, -0.12], [0.11, 0.03], [0.085, 0.12]], 32), 0, -0.10, 0); shoulderPatch(arm, m);
     add(arm, lathe(m.skin, [[0.055, -0.43], [0.082, -0.36], [0.085, -0.23], [0.068, -0.16]], 32), 0, -0.10, 0);
     hand(arm, m, x < 0 ? -1 : 1); torso.add(arm);
   }
