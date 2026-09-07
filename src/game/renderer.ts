@@ -125,6 +125,12 @@ export class Renderer {
     left: new Image(),
     nw: new Image(),
   };
+  private readonly danaAngles: Record<"front" | "right" | "back" | "left", HTMLImageElement> = {
+    front: new Image(),
+    right: new Image(),
+    back: new Image(),
+    left: new Image(),
+  };
 
   tileH(): number {
     return TILE_W * Math.sin((this.pitch * Math.PI) / 180);
@@ -162,6 +168,10 @@ export class Renderer {
     for (const [angle, image] of Object.entries(this.maraAngles)) {
       image.decoding = "async";
       image.src = `./sprites/mara-${angle}.png`;
+    }
+    for (const [angle, image] of Object.entries(this.danaAngles)) {
+      image.decoding = "async";
+      image.src = `./sprites/dana-${angle}.png`;
     }
     this.resize();
   }
@@ -1099,9 +1109,23 @@ export class Renderer {
     if (u.archetype === "mara") {
       // Mara is the authored soft mesh; Dana and Priya remain sprite billboards.
       drawRig(ctx, shifted, u, this.time, z, this.yaw);
+    } else if (u.archetype === "dana") {
+      // Dana Step 1 has four painted cardinal angles. Grid-facing 8-way dirs
+      // choose the nearest painted angle: 0/1 front, 2/3 right, 4/5 back,
+      // 6/7 left. Painted left/right sprites are never billboard-mirrored.
+      const angle = u.dir <= 1 ? "front" : u.dir <= 3 ? "right" : u.dir <= 5 ? "back" : "left";
+      const painted = this.danaAngles[angle];
+      const fallback = this.mapDolls.dana;
+      if (painted.complete && painted.naturalWidth > 0 && painted.naturalHeight > 0) {
+        this.drawMapDoll(painted, x, feetY, z, face, elite, false);
+      } else if (fallback.complete && fallback.naturalWidth > 0 && fallback.naturalHeight > 0) {
+        this.drawMapDoll(fallback, x, feetY, z, face, elite, false);
+      } else {
+        drawRig(ctx, shifted, u, this.time, z, this.yaw);
+      }
     } else {
-      const dollArchetype = u.archetype === "dana" || u.archetype === "priya" ? u.archetype : null;
-      const doll = dollArchetype ? this.mapDolls[dollArchetype] : null;
+      // Priya remains the single authored sprite billboard.
+      const doll = u.archetype === "priya" ? this.mapDolls.priya : null;
       if (doll && doll.complete && doll.naturalWidth > 0 && doll.naturalHeight > 0) this.drawMapDoll(doll, x, feetY, z, face, elite);
       else drawRig(ctx, shifted, u, this.time, z, this.yaw);
     }
