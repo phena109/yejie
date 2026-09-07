@@ -75,10 +75,20 @@ function hairShell(): THREE.BufferGeometry {
 }
 
 function eye(head: THREE.Group, m: SoftMats, x: number): void {
-  const white = new THREE.Mesh(new THREE.CircleGeometry(0.105, 28), m.eyeWhite); white.scale.set(0.78, 1.12, 1); add(head, white, x, 0.015, 0.352);
-  const iris = new THREE.Mesh(new THREE.CircleGeometry(0.071, 24), m.eyeBlue); iris.scale.set(0.72, 1.08, 1); add(head, iris, x, 0.008, 0.356);
-  const pupil = new THREE.Mesh(new THREE.CircleGeometry(0.037, 20), m.eyeDark); pupil.scale.set(0.75, 1.08, 1); add(head, pupil, x, 0.005, 0.359);
-  add(head, new THREE.Mesh(new THREE.CircleGeometry(0.014, 12), m.eyeWhite), x - 0.018, 0.041, 0.362);
+  const socket = new THREE.Mesh(new THREE.SphereGeometry(1, 24, 16), m.shadow);
+  socket.scale.set(0.132, 0.118, 0.045); add(head, socket, x, 0.022, 0.335);
+  const white = new THREE.Mesh(new THREE.SphereGeometry(1, 28, 18), m.eyeWhite);
+  white.scale.set(0.101, 0.112, 0.046); add(head, white, x, 0.018, 0.367);
+  const iris = new THREE.Mesh(new THREE.SphereGeometry(1, 24, 16), m.eyeBlue);
+  iris.scale.set(0.068, 0.079, 0.038); add(head, iris, x, 0.012, 0.414);
+  const pupil = new THREE.Mesh(new THREE.SphereGeometry(1, 20, 14), m.eyeDark);
+  pupil.scale.set(0.035, 0.052, 0.031); add(head, pupil, x, 0.008, 0.451);
+  const highlight = new THREE.Mesh(new THREE.SphereGeometry(1, 14, 10), m.eyeWhite);
+  highlight.scale.set(0.017, 0.020, 0.014); add(head, highlight, x - 0.022, 0.044, 0.481);
+  const lid = new THREE.Mesh(new THREE.CapsuleGeometry(0.012, 0.13, 4, 12), m.eyeDark);
+  lid.rotation.z = Math.PI / 2; add(head, lid, x, 0.087, 0.443);
+  const brow = new THREE.Mesh(new THREE.CapsuleGeometry(0.013, 0.105, 4, 12), m.hair);
+  brow.rotation.z = Math.PI / 2 + (x < 0 ? -0.18 : 0.18); add(head, brow, x, 0.151, 0.397);
 }
 function face(head: THREE.Group, m: SoftMats): void {
   eye(head, m, -0.125); eye(head, m, 0.125);
