@@ -1108,17 +1108,12 @@ export class Renderer {
       const q = project(lx, ly, lz);
       return { x: q.x + dx, y: q.y + dy, d: q.d };
     };
-    // Mara's painted turnaround is keyed to grid facing, not camera yaw:
-    // 0 N/front, 1 NE, 2 E/right, 3 SE, 4 S/back, 5 SW, 6 W/left, 7 NW.
-    if (u.archetype === "mara") {
-      // Mara is the authored soft mesh; Dana and Priya remain sprite billboards.
-      drawRig(ctx, shifted, u, this.time, z, this.yaw);
-    } else if (u.archetype === "dana") {
-      // Dana painted turnaround is keyed to grid facing, not camera yaw:
-      // 0 N/front, 1 NE, 2 E/right, 3 SE, 4 S/back, 5 SW, 6 W/left, 7 NW.
+    // Soft-mesh climb ended — Mara + Dana map dolls use painted 8-dir sprites.
+    // Grid facing: 0 N/front, 1 NE, 2 E/right, 3 SE, 4 S/back, 5 SW, 6 W/left, 7 NW.
+    if (u.archetype === "mara" || u.archetype === "dana") {
       const angle = (["front", "ne", "right", "se", "back", "sw", "left", "nw"] as const)[u.dir];
-      const painted = this.danaAngles[angle];
-      const fallback = this.mapDolls.dana;
+      const painted = u.archetype === "mara" ? this.maraAngles[angle] : this.danaAngles[angle];
+      const fallback = u.archetype === "mara" ? this.mapDolls.mara : this.mapDolls.dana;
       if (painted.complete && painted.naturalWidth > 0 && painted.naturalHeight > 0) {
         this.drawMapDoll(painted, x, feetY, z, face, elite, false);
       } else if (fallback.complete && fallback.naturalWidth > 0 && fallback.naturalHeight > 0) {
