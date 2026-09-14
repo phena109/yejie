@@ -1,0 +1,102 @@
+{
+  "adventurer": {
+    "file": "Adventurer.glb",
+    "height": 1.788,
+    "size": {
+      "x": 0.518,
+      "y": 1.788,
+      "z": 0.635
+    },
+    "png": "/workspace/yejie/docs-art/mara-umw-candidates/adventurer-front.png"
+  },
+  "animated-woman": {
+    "file": "Animated Woman.glb",
+    "height": 1.809,
+    "size": {
+      "x": 0.524,
+      "y": 1.809,
+      "z": 0.619
+    },
+    "png": "/workspace/yejie/docs-art/mara-umw-candidates/animated-woman-front.png"
+  },
+  "animated-woman-niitlv9nxs": {
+    "file": "Animated Woman-nIItLV9nxS.glb",
+    "height": 1.8,
+    "size": {
+      "x": 0.534,
+      "y": 1.8,
+      "z": 0.593
+    },
+    "png": "/workspace/yejie/docs-art/mara-umw-candidates/animated-woman-niitlv9nxs-front.png"
+  },
+  "medieval": {
+    "file": "Medieval.glb",
+    "height": 1.837,
+    "size": {
+      "x": 0.576,
+      "y": 1.837,
+      "z": 1.026
+    },
+    "png": "/workspace/yejie/docs-art/mara-umw-candidates/medieval-front.png"
+  },
+  "punk": {
+    "file": "Punk.glb",
+    "height": 1.919,
+    "size": {
+      "x": 0.51,
+      "y": 1.919,
+      "z": 0.602
+    },
+    "png": "/workspace/yejie/docs-art/mara-umw-candidates/punk-front.png"
+  },
+  "sci-fi-character": {
+    "file": "Sci Fi Character.glb",
+    "height": 1.813,
+    "size": {
+      "x": 0.542,
+      "y": 1.813,
+      "z": 0.593
+    },
+    "png": "/workspace/yejie/docs-art/mara-umw-candidates/sci-fi-character-front.png"
+  },
+  "soldier": {
+    "file": "Soldier.glb",
+    "height": 1.789,
+    "size": {
+      "x": 0.513,
+      "y": 1.789,
+      "z": 0.615
+    },
+    "png": "/workspace/yejie/docs-art/mara-umw-candidates/soldier-front.png"
+  },
+  "suit": {
+    "file": "Suit.glb",
+    "height": 1.803,
+    "size": {
+      "x": 0.54,
+      "y": 1.803,
+      "z": 0.617
+    },
+    "png": "/workspace/yejie/docs-art/mara-umw-candidates/suit-front.png"
+  },
+  "witch": {
+    "file": "Witch.glb",
+    "height": 2.01,
+    "size": {
+      "x": 0.557,
+      "y": 2.01,
+      "z": 0.615
+    },
+    "png": "/workspace/yejie/docs-art/mara-umw-candidates/witch-front.png"
+  },
+  "worker": {
+    "file": "Worker.glb",
+    "height": 1.821,
+    "size": {
+      "x": 0.538,
+      "y": 1.821,
+      "z": 0.617
+    },
+    "png": "/workspace/yejie/docs-art/mara-umw-candidates/worker-front.png"
+  }
+}

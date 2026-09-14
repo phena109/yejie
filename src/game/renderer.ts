@@ -1,6 +1,7 @@
 import type { GameMap, MapTheme } from "./map";
 import type { BoardObj } from "./objects";
 import { CHAR_H, drawRig, localToGrid, rigDrawHeight, type ProjectFn } from "./rig";
+import { drawMaraGltf, precacheMaraGltf } from "./maraGltf";
 import type { Dir, FloatText, Phase, Tile, Unit, Vec2 } from "./types";
 import { DIRS, factionColor, key, nextYaw, yawDir, yawPoint } from "./types";
 
@@ -178,6 +179,7 @@ export class Renderer {
       image.src = `./sprites/dana-${angle}.png`;
     }
     this.resize();
+    precacheMaraGltf();
   }
 
   resize(): void {
@@ -1108,12 +1110,26 @@ export class Renderer {
       const q = project(lx, ly, lz);
       return { x: q.x + dx, y: q.y + dy, d: q.d };
     };
-    // Soft-mesh climb ended — Mara + Dana map dolls use painted 8-dir sprites.
+    // Mara: Quaternius Ultimate Modular Women (Animated Woman) glTF portrait (soft mesh stays off map).
+    // Dana: painted 8-dir sprites. Priya: authored sprite billboard.
     // Grid facing: 0 N/front, 1 NE, 2 E/right, 3 SE, 4 S/back, 5 SW, 6 W/left, 7 NW.
-    if (u.archetype === "mara" || u.archetype === "dana") {
+    if (u.archetype === "mara") {
+      if (!drawMaraGltf(ctx, shifted, u, z)) {
+        const angle = (["front", "ne", "right", "se", "back", "sw", "left", "nw"] as const)[u.dir];
+        const painted = this.maraAngles[angle];
+        const fallback = this.mapDolls.mara;
+        if (painted.complete && painted.naturalWidth > 0 && painted.naturalHeight > 0) {
+          this.drawMapDoll(painted, x, feetY, z, face, elite, false);
+        } else if (fallback.complete && fallback.naturalWidth > 0 && fallback.naturalHeight > 0) {
+          this.drawMapDoll(fallback, x, feetY, z, face, elite, false);
+        } else {
+          drawRig(ctx, shifted, u, this.time, z, this.yaw);
+        }
+      }
+    } else if (u.archetype === "dana") {
       const angle = (["front", "ne", "right", "se", "back", "sw", "left", "nw"] as const)[u.dir];
-      const painted = u.archetype === "mara" ? this.maraAngles[angle] : this.danaAngles[angle];
-      const fallback = u.archetype === "mara" ? this.mapDolls.mara : this.mapDolls.dana;
+      const painted = this.danaAngles[angle];
+      const fallback = this.mapDolls.dana;
       if (painted.complete && painted.naturalWidth > 0 && painted.naturalHeight > 0) {
         this.drawMapDoll(painted, x, feetY, z, face, elite, false);
       } else if (fallback.complete && fallback.naturalWidth > 0 && fallback.naturalHeight > 0) {

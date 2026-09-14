@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>UMW Mara candidates</title>
+  <style>
+    :root { color-scheme: dark; }
+    body { margin: 0; background: #071321; color: #edf7ff; font: 13px Arial, sans-serif; padding: 12px; }
+    h1 { color: #58e7df; font-size: 18px; margin: 0 0 10px; }
+    .grid { display: grid; grid-template-columns: repeat(5, 220px); gap: 10px; }
+    .card { width: 220px; height: 300px; background: #0b1b2e; border: 1px solid #274d6b; position: relative; }
+    .card h2 { position: absolute; z-index: 2; top: 8px; left: 8px; margin: 0; font-size: 11px; color: #9deee9; max-width: 200px; }
+    canvas { width: 100%; height: 100%; display: block; }
+    #status { margin-top: 10px; }
+  </style>
+</head>
+<body>
+  <h1>Ultimate Modular Women · front candidates</h1>
+  <div class="grid" id="grid"></div>
+  <div id="status">loading…</div>
+  <script type="module">
+    import * as THREE from "three";
+    import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
+
+    const files = [
+      "Adventurer.glb",
+      "Animated Woman.glb",
+      "Animated Woman-nIItLV9nxS.glb",
+      "Medieval.glb",
+      "Punk.glb",
+      "Sci Fi Character.glb",
+      "Soldier.glb",
+      "Suit.glb",
+      "Witch.glb",
+      "Worker.glb",
+    ];
+
+    const grid = document.querySelector("#grid");
+    const status = document.querySelector("#status");
+    const loader = new GLTFLoader();
+    const exports = {};
+
+    async function renderOne(file) {
+      const card = document.createElement("article");
+      card.className = "card";
+      const h = document.createElement("h2");
+      h.textContent = file.replace(/\.glb$/, "");
+      const canvas = document.createElement("canvas");
+      canvas.width = 440;
+      canvas.height = 600;
+      card.append(h, canvas);
+      grid.append(card);
+
+      const renderer = new THREE.WebGLRenderer({ canvas, alpha: true, antialias: true, preserveDrawingBuffer: true });
+      renderer.setSize(440, 600, false);
+      renderer.setPixelRatio(1);
+      renderer.setClearColor(0x0b1b2e, 1);
+      renderer.outputColorSpace = THREE.SRGBColorSpace;
+      const scene = new THREE.Scene();
+      const aspect = 440 / 600;
+      const cam = new THREE.OrthographicCamera(-1.2 * aspect, 1.2 * aspect, 1.2, -1.2, 0.1, 50);
+      scene.add(new THREE.HemisphereLight(0xfff3df, 0x222844, 1.35));
+      const key = new THREE.DirectionalLight(0xffe7c7, 1.7);
+      key.position.set(3.5, 6, 4.5);
+      scene.add(key);
+      const fill = new THREE.DirectionalLight(0x93b5ff, 0.65);
+      fill.position.set(-4, 2, -3);
+      scene.add(fill);
+
+      const gltf = await loader.loadAsync(`/models/umw-candidates/${encodeURIComponent(file)}`);
+      const root = gltf.scene;
+      const box = new THREE.Box3().setFromObject(root);
+      const size = new THREE.Vector3();
+      const center = new THREE.Vector3();
+      box.getSize(size);
+      box.getCenter(center);
+      root.position.sub(center);
+      const maxDim = Math.max(size.x, size.y, size.z) || 1;
+      const scale = 2.0 / maxDim;
+      root.scale.setScalar(scale);
+      const box2 = new THREE.Box3().setFromObject(root);
+      const c2 = new THREE.Vector3();
+      box2.getCenter(c2);
+      root.position.sub(c2);
+      root.position.y += 0.05;
+      scene.add(root);
+
+      const pitch = (28 * Math.PI) / 180;
+      const d = 4.0;
+      cam.position.set(0, Math.sin(pitch) * d + 0.2, Math.cos(pitch) * d);
+      cam.lookAt(0, 0.15, 0);
+      cam.updateProjectionMatrix();
+      renderer.render(scene, cam);
+
+      const slug = file.replace(/\.glb$/, "").replace(/[^a-zA-Z0-9]+/g, "-").replace(/-+$/g, "").toLowerCase();
+      exports[slug] = {
+        file,
+        dataUrl: canvas.toDataURL("image/png"),
+        size: { x: +size.x.toFixed(3), y: +size.y.toFixed(3), z: +size.z.toFixed(3) },
+        height: +size.y.toFixed(3),
+      };
+      renderer.dispose();
+    }
+
+    try {
+      for (const f of files) await renderOne(f);
+      window.__UMW_CAND__ = { ok: true, exports };
+      status.textContent = "ready " + Object.keys(exports).join(", ");
+      document.body.dataset.ready = "true";
+    } catch (err) {
+      window.__UMW_CAND__ = { ok: false, error: String(err) };
+      status.textContent = "failed: " + err;
+      document.body.dataset.ready = "false";
+    }
+  </script>
+</body>
+</html>

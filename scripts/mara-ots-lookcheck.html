@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Mara OTS Ultimate Modular Women lookcheck</title>
+  <style>
+    :root { color-scheme: dark; }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; background: #071321; color: #edf7ff; font: 14px Arial, sans-serif; }
+    body { padding: 16px; }
+    h1 { margin: 0 0 6px; color: #58e7df; letter-spacing: 2px; font-size: 20px; }
+    .sub { color: #91b5d1; margin-bottom: 14px; }
+    .grid { display: grid; grid-template-columns: repeat(4, 280px); gap: 12px; justify-content: start; }
+    .panel { border: 1px solid #274d6b; background: #0b1b2e; position: relative; width: 280px; height: 360px; }
+    .panel h2 { position: absolute; z-index: 2; top: 10px; left: 12px; margin: 0; color: #9deee9; font-size: 13px; letter-spacing: 1px; }
+    canvas, img { display: block; width: 100%; height: 100%; object-fit: contain; background: #0b1b2e; }
+    #status { margin-top: 12px; color: #b2cce0; }
+  </style>
+</head>
+<body>
+  <h1>MARA · OFF-THE-SHELF (ULTIMATE MODULAR WOMEN)</h1>
+  <div class="sub">Animated_Woman.glb (cute short bob) · map portrait angles vs painted VN bust</div>
+  <section class="grid">
+    <article class="panel"><h2>FRONT</h2><canvas id="front" width="560" height="720"></canvas></article>
+    <article class="panel"><h2>SIDE</h2><canvas id="side" width="560" height="720"></canvas></article>
+    <article class="panel"><h2>THREE-QUARTER</h2><canvas id="tq" width="560" height="720"></canvas></article>
+    <article class="panel"><h2>VN BUST (PAINTED)</h2><img id="vn" src="/sprites/vn-mara.png" alt="painted Mara VN" /></article>
+  </section>
+  <div id="status">loading…</div>
+  <script type="module">
+    import { renderMaraGltfLookcheck, maraGltfState } from "../src/game/maraGltf.ts";
+
+    const status = document.querySelector("#status");
+    const views = [
+      { id: "front", yaw: 0, file: "mara-umw-front.png" },
+      { id: "side", yaw: Math.PI / 2, file: "mara-umw-side.png" },
+      { id: "tq", yaw: Math.PI / 4, file: "mara-umw-three-quarter.png" },
+    ];
+
+    const exports = {};
+    let ok = true;
+    for (const v of views) {
+      const canvas = document.querySelector("#" + v.id);
+      const painted = await renderMaraGltfLookcheck(canvas, { yawRad: v.yaw, pitchDeg: 30 });
+      if (!painted) { ok = false; break; }
+      exports[v.file] = canvas.toDataURL("image/png");
+    }
+
+    // Composite eye-test: 4-up
+    const board = document.createElement("canvas");
+    board.width = 1120;
+    board.height = 720;
+    const bctx = board.getContext("2d");
+    bctx.fillStyle = "#071321";
+    bctx.fillRect(0, 0, board.width, board.height);
+    const labels = ["FRONT", "SIDE", "¾", "VN BUST"];
+    const sources = [
+      document.querySelector("#front"),
+      document.querySelector("#side"),
+      document.querySelector("#tq"),
+      document.querySelector("#vn"),
+    ];
+    for (let i = 0; i < 4; i++) {
+      const x = (i % 4) * 280;
+      const y = 0;
+      bctx.fillStyle = "#0b1b2e";
+      bctx.fillRect(x, y, 280, 720);
+      const src = sources[i];
+      if (src) bctx.drawImage(src, x, 40, 280, 640);
+      bctx.fillStyle = "#9deee9";
+      bctx.font = "bold 18px Arial";
+      bctx.fillText(labels[i], x + 12, 28);
+    }
+    exports["mara-umw-eye-test.png"] = board.toDataURL("image/png");
+
+    window.__MARA_OTS__ = { ok, state: maraGltfState(), exports };
+    status.textContent = ok ? "ready" : "failed state=" + maraGltfState();
+    document.body.dataset.ready = ok ? "true" : "false";
+  </script>
+</body>
+</html>
