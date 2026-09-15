@@ -19,7 +19,7 @@
 </head>
 <body>
   <h1>MARA · OFF-THE-SHELF (ULTIMATE MODULAR WOMEN)</h1>
-  <div class="sub">Animated_Woman.glb (cute short bob) · map portrait angles vs painted VN bust</div>
+  <div class="sub">Animated_Woman.glb · OTS Step 2 navy shirt + dark pants · bob/skin untouched · vs painted VN bust</div>
   <section class="grid">
     <article class="panel"><h2>FRONT</h2><canvas id="front" width="560" height="720"></canvas></article>
     <article class="panel"><h2>SIDE</h2><canvas id="side" width="560" height="720"></canvas></article>
@@ -32,9 +32,9 @@
 
     const status = document.querySelector("#status");
     const views = [
-      { id: "front", yaw: 0, file: "mara-umw-front.png" },
-      { id: "side", yaw: Math.PI / 2, file: "mara-umw-side.png" },
-      { id: "tq", yaw: Math.PI / 4, file: "mara-umw-three-quarter.png" },
+      { id: "front", yaw: 0, file: "mara-ots2-front.png" },
+      { id: "side", yaw: Math.PI / 2, file: "mara-ots2-side.png" },
+      { id: "tq", yaw: Math.PI / 4, file: "mara-ots2-three-quarter.png" },
     ];
 
     const exports = {};
@@ -71,7 +71,7 @@
       bctx.font = "bold 18px Arial";
       bctx.fillText(labels[i], x + 12, 28);
     }
-    exports["mara-umw-eye-test.png"] = board.toDataURL("image/png");
+    exports["mara-ots2-eye-test.png"] = board.toDataURL("image/png");
 
     window.__MARA_OTS__ = { ok, state: maraGltfState(), exports };
     status.textContent = ok ? "ready" : "failed state=" + maraGltfState();

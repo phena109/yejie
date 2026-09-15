@@ -22,6 +22,10 @@ const MODEL_URL = publicUrl("models/quaternius/modular-women/Animated_Woman.glb"
 
 /** Mara palette hair — tint Quaternius Hair_* materials toward VN Mara. */
 const MARA_HAIR = 0x202c48;
+/** School-uniform navy tee (White / Casual_Body). Deep navy, not black. */
+const MARA_SHIRT = 0x214d78;
+/** Dark navy / near-black pants (Orange / Casual_Legs). */
+const MARA_PANTS = 0x111722;
 
 const PORTRAIT_PITCH = 30;
 const VIEW_W = 192;
@@ -108,6 +112,35 @@ function tintHair(obj: THREE.Object3D): void {
   });
 }
 
+/**
+ * Outfit tint only: White (Casual_Body tee) → navy school shirt,
+ * Orange (Casual_Legs) → dark navy/near-black pants.
+ * Leaves Skin, Hair_*, Brown, Grey (shoes), eyes, bob geometry alone.
+ * No separate collar/necktie materials on this GLB — shirt+pants only.
+ */
+function tintOutfit(obj: THREE.Object3D): void {
+  obj.traverse((o) => {
+    const mesh = o as THREE.Mesh;
+    if (!mesh.isMesh) return;
+    const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+    for (const m of mats) {
+      const std = m as THREE.MeshStandardMaterial;
+      if (!std || !std.color) continue;
+      const name = (std.name || "").trim();
+      let hex: number | null = null;
+      if (name === "White") hex = MARA_SHIRT;
+      else if (name === "Orange") hex = MARA_PANTS;
+      if (hex == null) continue;
+      std.color.setHex(hex);
+      // Drop cloth albedo so solid uniform color reads cleanly.
+      if (std.map) {
+        std.map = null;
+      }
+      std.needsUpdate = true;
+    }
+  });
+}
+
 /** Prefer Idle clip first frame for a readable standing map portrait. */
 function applyIdlePose(gltf: { scene: THREE.Object3D; animations: THREE.AnimationClip[] }): void {
   const clips = gltf.animations ?? [];
@@ -137,6 +170,7 @@ function beginLoad(): void {
     .then((gltf) => {
       applyIdlePose(gltf);
       tintHair(gltf.scene);
+      tintOutfit(gltf.scene);
       const group = new THREE.Group();
       group.name = "maraQuaterniusUmw";
       group.add(gltf.scene);
