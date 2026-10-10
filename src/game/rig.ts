@@ -183,6 +183,53 @@ function pose(p: RigParts, a: Archetype, clip: AnimClip, t: number, now: number)
 }
 
 let renderer: THREE.WebGLRenderer | null = null; let scene: THREE.Scene | null = null; let camera: THREE.OrthographicCamera | null = null; let stage: THREE.Group | null = null; let glReady = false;
+/** Stable 2D copy of the last rig portrait. The WebGL canvas is overwritten every drawRig. */
+let portrait2d: HTMLCanvasElement | null = null;
+function portraitSnapshot(src: HTMLCanvasElement): HTMLCanvasElement {
+  if (!portrait2d) portrait2d = document.createElement("canvas");
+  if (portrait2d.width !== src.width || portrait2d.height !== src.height) {
+    portrait2d.width = src.width;
+    portrait2d.height = src.height;
+  }
+  const g = portrait2d.getContext("2d");
+  if (g) {
+    g.setTransform(1, 0, 0, 1, 0, 0);
+    g.globalAlpha = 1;
+    g.globalCompositeOperation = "source-over";
+    g.clearRect(0, 0, portrait2d.width, portrait2d.height);
+    g.drawImage(src, 0, 0);
+  }
+  return portrait2d;
+}
+/** Grey stand-in used when WebGL is unavailable. Shared; callers must copy before the next draw. */
+let fallback2d: HTMLCanvasElement | null = null;
+function ellipseBillboard(scrW: number, scrH: number): HTMLCanvasElement {
+  if (!fallback2d) fallback2d = document.createElement("canvas");
+  const w = Math.max(2, Math.ceil(scrW));
+  const h = Math.max(2, Math.ceil(scrH));
+  if (fallback2d.width !== w || fallback2d.height !== h) {
+    fallback2d.width = w;
+    fallback2d.height = h;
+  }
+  const g = fallback2d.getContext("2d");
+  if (g) {
+    g.setTransform(1, 0, 0, 1, 0, 0);
+    g.clearRect(0, 0, w, h);
+    g.fillStyle = "#6a7080";
+    g.beginPath();
+    // Matches the on-map ellipse: center is scrH*0.53 below the billboard top, feet sit at 0.88.
+    g.ellipse(w / 2, h * 0.53, Math.max(1, w * 0.22), Math.max(1, h * 0.35), 0, 0, Math.PI * 2);
+    g.fill();
+  }
+  return fallback2d;
+}
+export interface RigBillboard {
+  source: HTMLCanvasElement;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
 function ensureGL(): boolean {
   if (glReady && renderer) return true; if (typeof document === "undefined") return false;
   try {
@@ -193,16 +240,25 @@ function ensureGL(): boolean {
 function dirAngle(dir: Dir): number { return dir * Math.PI / 4; }
 const PORTRAIT_PITCH = 30;
 function placeCamera(yaw: number, pitchDeg: number): void { if (!camera) return; const pitch = pitchDeg * Math.PI / 180; const d = 4.2; const cp = Math.cos(pitch); const sp = Math.sin(pitch); camera.position.set(Math.sin(yaw) * cp * d, sp * d + 0.85, Math.cos(yaw) * cp * d); camera.lookAt(0, 0.88, 0); camera.updateProjectionMatrix(); }
-export function drawRig(ctx: CanvasRenderingContext2D, project: ProjectFn, u: Unit, now: number, zoom: number, camYaw = 0): void {
+export function drawRig(ctx: CanvasRenderingContext2D, project: ProjectFn, u: Unit, now: number, zoom: number, camYaw = 0): RigBillboard | null {
   // The portrait is a fixed-size billboard. Projected crown/feet distance changes with map pitch.
   const feet = project(0, 0, 0); const scrH = rigDrawHeight(zoom) * (u.role === "elite" ? 1.12 : 1); const scrW = scrH * 192 / 240;
-  if (!ensureGL() || !renderer || !scene || !camera || !stage) { ctx.fillStyle = "#6a7080"; ctx.beginPath(); ctx.ellipse(feet.x, feet.y - scrH * 0.35, scrW * 0.22, scrH * 0.35, 0, 0, Math.PI * 2); ctx.fill(); return; }
+  const destX = feet.x - scrW * 0.5; const destY = feet.y - scrH * 0.88;
+  if (!ensureGL() || !renderer || !scene || !camera || !stage) {
+    const stand = ellipseBillboard(scrW, scrH);
+    ctx.save(); ctx.drawImage(stand, destX, destY, scrW, scrH); ctx.restore();
+    return { source: stand, x: destX, y: destY, w: scrW, h: scrH };
+  }
   const t = template(u.archetype, u.gender); const active = activeClip(u, now); pose(t.parts, u.archetype, active.clip, active.t, now);
   while (stage.children.length) stage.remove(stage.children[0]); if (t.parts.root.parent) t.parts.root.parent.remove(t.parts.root); stage.add(t.parts.root);
   // +Z is the model face; rotate it to the exact grid direction before projection.
   // Grid facing only: model turns with u.dir. Portrait camera stays fixed so map yaw never spins the unit.
+  // One template is shared per archetype+gender, so each call re-poses that mesh and must copy the canvas
+  // before the next unit of the same archetype renders over it.
   t.parts.root.rotation.set(0, dirAngle(u.dir), 0); placeCamera(0, PORTRAIT_PITCH); renderer.render(scene, camera);
-  ctx.save(); ctx.imageSmoothingEnabled = true; ctx.drawImage(renderer.domElement, feet.x - scrW * 0.5, feet.y - scrH * 0.88, scrW, scrH); ctx.restore(); void zoom; void camYaw;
+  const shot = portraitSnapshot(renderer.domElement);
+  ctx.save(); ctx.imageSmoothingEnabled = true; ctx.drawImage(shot, destX, destY, scrW, scrH); ctx.restore(); void camYaw;
+  return { source: shot, x: destX, y: destY, w: scrW, h: scrH };
 }
 export function precacheRigs(): void { if (!ensureGL()) return; const all: Archetype[] = ["mara", "dana", "priya", "hale", "crosby", "beckett", "delinquent", "magician", "wolverine", "boxer", "gunner", "worker", "official"]; for (const a of all) for (const g of ["f", "m"] as Gender[]) template(a, g); }
 export function meshTris(a: Archetype, g: Gender): number { return template(a, g).parts.tris; }

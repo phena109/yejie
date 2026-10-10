@@ -1,9 +1,8 @@
 import type { GameMap, MapTheme } from "./map";
 import type { BoardObj } from "./objects";
-import { CHAR_H, drawRig, localToGrid, rigDrawHeight, type ProjectFn } from "./rig";
-import { drawMaraGltf, precacheMaraGltf } from "./maraGltf";
+import { CHAR_H, drawRig, localToGrid, rigDrawHeight, type ProjectFn, type RigBillboard } from "./rig";
 import type { Dir, FloatText, Phase, Tile, Unit, Vec2 } from "./types";
-import { DIRS, factionColor, key, nextYaw, yawDir, yawPoint } from "./types";
+import { DIRS, factionColor, isPlayerControlled, key, nextYaw, yawDir, yawPoint } from "./types";
 
 /** Diamond width at 45° yaw. Height and block scale with pitch. */
 export const TILE_W = 64;
@@ -87,6 +86,80 @@ function pointInQuad(
   d: Vec2,
 ): boolean {
   return pointInTri(px, py, a.x, a.y, b.x, b.y, c.x, c.y) || pointInTri(px, py, a.x, a.y, c.x, c.y, d.x, d.y);
+}
+
+interface ScreenRect {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
+/** What drawUnit put on screen this frame, so the occlusion ghost can reuse it. */
+interface BodyStamp {
+  source: CanvasImageSource;
+  sw: number;
+  sh: number;
+  dx: number;
+  dy: number;
+  dw: number;
+  dh: number;
+  mirror: boolean;
+}
+
+function rectsOverlap(a: ScreenRect, b: ScreenRect): boolean {
+  return a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
+}
+
+function rectHasPoint(r: ScreenRect, x: number, y: number): boolean {
+  return x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h;
+}
+
+function segmentsIntersect(a: Vec2, b: Vec2, c: Vec2, d: Vec2): boolean {
+  const dx1 = b.x - a.x;
+  const dy1 = b.y - a.y;
+  const dx2 = d.x - c.x;
+  const dy2 = d.y - c.y;
+  const den = dx1 * dy2 - dy1 * dx2;
+  if (Math.abs(den) < 1e-8) return false;
+  const t = ((c.x - a.x) * dy2 - (c.y - a.y) * dx2) / den;
+  const u = ((c.x - a.x) * dy1 - (c.y - a.y) * dx1) / den;
+  return t >= -1e-4 && t <= 1 + 1e-4 && u >= -1e-4 && u <= 1 + 1e-4;
+}
+
+/** True when an axis-aligned body box meets a tile face. */
+function quadHitsRect(quad: Vec2[], rect: ScreenRect): boolean {
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  for (const p of quad) {
+    if (p.x < minX) minX = p.x;
+    if (p.y < minY) minY = p.y;
+    if (p.x > maxX) maxX = p.x;
+    if (p.y > maxY) maxY = p.y;
+  }
+  if (maxX < rect.x || minX > rect.x + rect.w || maxY < rect.y || minY > rect.y + rect.h) return false;
+  const corners: Vec2[] = [
+    { x: rect.x, y: rect.y },
+    { x: rect.x + rect.w, y: rect.y },
+    { x: rect.x + rect.w, y: rect.y + rect.h },
+    { x: rect.x, y: rect.y + rect.h },
+  ];
+  for (const c of corners) {
+    if (pointInQuad(c.x, c.y, quad[0], quad[1], quad[2], quad[3])) return true;
+  }
+  for (const p of quad) {
+    if (rectHasPoint(rect, p.x, p.y)) return true;
+  }
+  for (let i = 0; i < 4; i++) {
+    const a = quad[i];
+    const b = quad[(i + 1) % 4];
+    for (let j = 0; j < 4; j++) {
+      if (segmentsIntersect(a, b, corners[j], corners[(j + 1) % 4])) return true;
+    }
+  }
+  return false;
 }
 
 
@@ -398,6 +471,9 @@ const RING_DROP = 1;
  * drawMapDoll sprites are rigDrawHeight tall and about half as wide; rigs use the same figure box.
  */
 const UNIT_BODY_ASPECT = 0.5;
+/** Occlusion ghost. Full-opacity source, drawn over whatever hid the body. */
+const GHOST_ALPHA = 0.45;
+const MAP_ANGLES = ["front", "ne", "right", "se", "back", "sw", "left", "nw"] as const;
 
 function unitDrawHeight(zoom: number, elite: boolean): number {
   return rigDrawHeight(zoom) * (elite ? ELITE_SCALE : 1);
@@ -449,6 +525,11 @@ export class Renderer {
     left: new Image(),
     nw: new Image(),
   };
+  /** Per-unit body drawn this frame. Rig entries are copies; the WebGL canvas is shared. */
+  private readonly bodyStamps = new Map<string, BodyStamp>();
+  private readonly rigSnaps = new Map<string, HTMLCanvasElement>();
+  private ghostCanvas: HTMLCanvasElement | null = null;
+  private ghostCtx: CanvasRenderingContext2D | null = null;
 
   tileH(): number {
     return TILE_W * Math.sin((this.pitch * Math.PI) / 180);
@@ -493,7 +574,6 @@ export class Renderer {
       image.src = `./sprites/dana-${angle}.png`;
     }
     this.resize();
-    precacheMaraGltf();
   }
 
   resize(): void {
@@ -773,8 +853,13 @@ export class Renderer {
       if (!o.gone) objAt.set(key(o.x, o.y), o);
     }
 
+    const cells = this.cellsInDrawOrder(map);
+    const cellIndex = new Map<string, number>();
+    for (let i = 0; i < cells.length; i++) cellIndex.set(key(cells[i].x, cells[i].y), i);
+
+    this.bodyStamps.clear();
     const drawn: Unit[] = [];
-    for (const c of this.cellsInDrawOrder(map)) {
+    for (const c of cells) {
       this.drawTile(map.tiles[c.y][c.x], map, overlays);
       const o = objAt.get(key(c.x, c.y));
       if (o) this.drawBoardObj(o, map);
@@ -785,6 +870,10 @@ export class Renderer {
         drawn.push(u);
       }
     }
+
+    // Bodies painted in the cell loop can be covered by a later, taller prism.
+    // Replay the cached billboard before rings so the label still sits on top.
+    for (const u of drawn) this.drawOccludedGhost(u, map, cells, cellIndex, objAt);
 
     // Rings and names paint after tiles, or a nearer wall clips the feet label.
     for (const u of drawn) this.drawUnitOverlay(u, map);
@@ -1586,7 +1675,166 @@ export class Renderer {
     };
   }
 
+  /** Copy the shared rig portrait before the next unit re-renders it. */
+  private rememberRig(id: string, bill: RigBillboard | null): void {
+    if (!bill || !(bill.w > 0) || !(bill.h > 0) || bill.source.width === 0 || bill.source.height === 0) return;
+    let snap = this.rigSnaps.get(id);
+    if (!snap) {
+      snap = document.createElement("canvas");
+      this.rigSnaps.set(id, snap);
+    }
+    if (snap.width !== bill.source.width || snap.height !== bill.source.height) {
+      snap.width = bill.source.width;
+      snap.height = bill.source.height;
+    }
+    const g = snap.getContext("2d");
+    if (!g) return;
+    g.setTransform(1, 0, 0, 1, 0, 0);
+    g.globalAlpha = 1;
+    g.globalCompositeOperation = "source-over";
+    g.clearRect(0, 0, snap.width, snap.height);
+    g.drawImage(bill.source, 0, 0);
+    this.bodyStamps.set(id, {
+      source: snap,
+      sw: snap.width,
+      sh: snap.height,
+      dx: bill.x,
+      dy: bill.y,
+      dw: bill.w,
+      dh: bill.h,
+      mirror: false,
+    });
+  }
+
+  /**
+   * Blocks a board object adds above its tile. Platforms use standH.
+   * Barrel and van art rises about one block; flat pickups do not.
+   */
+  private objectRise(o: BoardObj): number {
+    if (o.kind === "platform") return o.standH;
+    if (o.type === "barrel" || o.type === "van") return 1;
+    return 0;
+  }
+
+  /** Screen box of a board object, matching drawBoardObj without changing how it paints. */
+  private boardObjRect(o: BoardObj, tileH: number): ScreenRect {
+    const z = this.cam.zoom;
+    const { cx, cy, hw, hh } = this.topMetrics(o.x, o.y, tileH);
+    let x0 = cx;
+    let y0 = cy;
+    let x1 = cx;
+    let y1 = cy;
+    const add = (x: number, y: number, w: number, h: number) => {
+      if (x < x0) x0 = x;
+      if (y < y0) y0 = y;
+      if (x + w > x1) x1 = x + w;
+      if (y + h > y1) y1 = y + h;
+    };
+    if (o.type === "barrel") {
+      add(cx - hw * 0.38, cy + 2 * z - hh * 0.32, hw * 0.76, hh * 0.64);
+      add(cx - 10 * z, cy - 22 * z, 20 * z, 24 * z);
+    } else if (o.type === "kit") {
+      add(cx - 8 * z, cy - 8 * z, 16 * z, 12 * z);
+    } else if (o.type === "switch") {
+      add(cx - hw * 0.35, cy - hh * 0.35, hw * 0.7, hh * 0.7);
+    } else if (o.type === "van") {
+      add(cx - 14 * z, cy - 18 * z, 28 * z, 40 * z);
+    } else {
+      const ph = o.type === "pallet" ? 8 * z : 12 * z;
+      const top = 2 * z + hh * 0.46;
+      add(cx - hw * 0.46, cy - top, hw * 0.92, top + hh * 0.46 + ph);
+    }
+    return { x: x0, y: y0, w: x1 - x0, h: y1 - y0 };
+  }
+
+  private prismHitsRect(t: Tile, body: ScreenRect): boolean {
+    const { drop, top } = this.topMetrics(t.x, t.y, t.h);
+    if (quadHitsRect(top, body)) return true;
+    for (const face of this.frontFaces(top, drop)) {
+      if (quadHitsRect(face, body)) return true;
+    }
+    return false;
+  }
+
+  private bodyOccluded(
+    u: Unit,
+    map: GameMap,
+    cells: Vec2[],
+    cellIndex: Map<string, number>,
+    objAt: Map<string, BoardObj>,
+    body: ScreenRect,
+  ): boolean {
+    const start = cellIndex.get(key(u.x, u.y));
+    if (start == null) return false;
+    const unitH = map.heightAt(u.x, u.y);
+    for (let i = start + 1; i < cells.length; i++) {
+      const c = cells[i];
+      const t = map.tiles[c.y][c.x];
+      if (t.h > unitH && this.prismHitsRect(t, body)) return true;
+      const o = objAt.get(key(c.x, c.y));
+      if (!o) continue;
+      if (t.h + this.objectRise(o) <= unitH) continue;
+      if (rectsOverlap(this.boardObjRect(o, t.h), body)) return true;
+    }
+    return false;
+  }
+
+  private drawGhost(stamp: BodyStamp, color: string): void {
+    const sw = Math.max(1, Math.round(stamp.sw));
+    const sh = Math.max(1, Math.round(stamp.sh));
+    if (!(stamp.dw > 0) || !(stamp.dh > 0)) return;
+    if (!this.ghostCanvas || !this.ghostCtx) {
+      this.ghostCanvas = document.createElement("canvas");
+      this.ghostCtx = this.ghostCanvas.getContext("2d");
+    }
+    const scratch = this.ghostCanvas;
+    const g = this.ghostCtx;
+    if (!g) return;
+    if (scratch.width < sw || scratch.height < sh) {
+      scratch.width = Math.max(scratch.width, sw);
+      scratch.height = Math.max(scratch.height, sh);
+    }
+    g.setTransform(1, 0, 0, 1, 0, 0);
+    g.globalCompositeOperation = "source-over";
+    g.globalAlpha = 1;
+    g.clearRect(0, 0, sw, sh);
+    g.save();
+    if (stamp.mirror) {
+      g.translate(sw, 0);
+      g.scale(-1, 1);
+    }
+    g.drawImage(stamp.source, 0, 0, stamp.sw, stamp.sh, 0, 0, sw, sh);
+    g.restore();
+    g.save();
+    g.globalCompositeOperation = "source-atop";
+    g.globalAlpha = 0.35;
+    g.fillStyle = color;
+    g.fillRect(0, 0, sw, sh);
+    g.restore();
+
+    const ctx = this.ctx;
+    ctx.save();
+    ctx.globalAlpha = GHOST_ALPHA;
+    ctx.drawImage(scratch, 0, 0, sw, sh, stamp.dx, stamp.dy, stamp.dw, stamp.dh);
+    ctx.restore();
+  }
+
+  private drawOccludedGhost(
+    u: Unit,
+    map: GameMap,
+    cells: Vec2[],
+    cellIndex: Map<string, number>,
+    objAt: Map<string, BoardObj>,
+  ): void {
+    const stamp = this.bodyStamps.get(u.id);
+    if (!stamp) return;
+    const body: ScreenRect = { x: stamp.dx, y: stamp.dy, w: stamp.dw, h: stamp.dh };
+    if (!this.bodyOccluded(u, map, cells, cellIndex, objAt, body)) return;
+    this.drawGhost(stamp, factionColor(u));
+  }
+
   private drawMapDoll(
+    id: string,
     image: HTMLImageElement,
     x: number,
     feetY: number,
@@ -1597,15 +1845,26 @@ export class Renderer {
   ): void {
     const dh = unitDrawHeight(z, elite);
     const dw = dh * image.naturalWidth / image.naturalHeight;
+    const mirrored = mirror && face.x - face.y < 0;
     const ctx = this.ctx;
     ctx.save();
     ctx.translate(x - dw / 2, feetY - dh);
-    if (mirror && face.x - face.y < 0) {
+    if (mirrored) {
       ctx.translate(dw, 0);
       ctx.scale(-1, 1);
     }
     ctx.drawImage(image, 0, 0, dw, dh);
     ctx.restore();
+    this.bodyStamps.set(id, {
+      source: image,
+      sw: image.naturalWidth,
+      sh: image.naturalHeight,
+      dx: x - dw / 2,
+      dy: feetY - dh,
+      dw,
+      dh,
+      mirror: mirrored,
+    });
   }
 
   private drawUnit(u: Unit, map: GameMap, overlays: DrawOverlays): void {
@@ -1613,8 +1872,11 @@ export class Renderer {
     const { x, feetY, z, scale, dh, dx, dy, ground: p, face, elite } = this.unitPose(u, map);
     const accent = factionColor(u);
     const done = u.acted;
+    // Idle NPCs are created with acted set, and enemies flip it during their phase.
+    // Fade only a player-controlled unit that has finished acting this turn.
+    const dim = isPlayerControlled(u) && u.acted;
     ctx.save();
-    if (done) ctx.globalAlpha *= 0.45;
+    if (dim) ctx.globalAlpha *= 0.45;
 
     ctx.fillStyle = "rgba(0,0,0,0.4)";
     ctx.beginPath();
@@ -1639,38 +1901,28 @@ export class Renderer {
       const q = project(lx, ly, lz);
       return { x: q.x + dx, y: q.y + dy, d: q.d };
     };
-    // Mara: Quaternius Ultimate Modular Women (Animated Woman) glTF portrait (soft mesh stays off map).
-    // Dana: painted 8-dir sprites. Priya: authored sprite billboard.
+    // Mara and Dana: painted 8-dir map sprites. Priya: authored sprite billboard.
+    // The glTF Mara portrait stays off the map (it filled part of the billboard and read as navy-on-dark).
     // Grid facing: 0 N/front, 1 NE, 2 E/right, 3 SE, 4 S/back, 5 SW, 6 W/left, 7 NW.
-    if (u.archetype === "mara") {
-      if (!drawMaraGltf(ctx, shifted, u, z)) {
-        const angle = (["front", "ne", "right", "se", "back", "sw", "left", "nw"] as const)[u.dir];
-        const painted = this.maraAngles[angle];
-        const fallback = this.mapDolls.mara;
-        if (painted.complete && painted.naturalWidth > 0 && painted.naturalHeight > 0) {
-          this.drawMapDoll(painted, x, feetY, z, face, elite, false);
-        } else if (fallback.complete && fallback.naturalWidth > 0 && fallback.naturalHeight > 0) {
-          this.drawMapDoll(fallback, x, feetY, z, face, elite, false);
-        } else {
-          drawRig(ctx, shifted, u, this.time, z, this.yaw);
-        }
-      }
-    } else if (u.archetype === "dana") {
-      const angle = (["front", "ne", "right", "se", "back", "sw", "left", "nw"] as const)[u.dir];
-      const painted = this.danaAngles[angle];
-      const fallback = this.mapDolls.dana;
+    if (u.archetype === "mara" || u.archetype === "dana") {
+      const angles = u.archetype === "mara" ? this.maraAngles : this.danaAngles;
+      const painted = angles[MAP_ANGLES[u.dir]];
+      const fallback = this.mapDolls[u.archetype];
       if (painted.complete && painted.naturalWidth > 0 && painted.naturalHeight > 0) {
-        this.drawMapDoll(painted, x, feetY, z, face, elite, false);
+        this.drawMapDoll(u.id, painted, x, feetY, z, face, elite, false);
       } else if (fallback.complete && fallback.naturalWidth > 0 && fallback.naturalHeight > 0) {
-        this.drawMapDoll(fallback, x, feetY, z, face, elite, false);
+        this.drawMapDoll(u.id, fallback, x, feetY, z, face, elite, false);
       } else {
-        drawRig(ctx, shifted, u, this.time, z, this.yaw);
+        this.rememberRig(u.id, drawRig(ctx, shifted, u, this.time, z, this.yaw));
       }
     } else {
       // Priya remains the single authored sprite billboard.
       const doll = u.archetype === "priya" ? this.mapDolls.priya : null;
-      if (doll && doll.complete && doll.naturalWidth > 0 && doll.naturalHeight > 0) this.drawMapDoll(doll, x, feetY, z, face, elite);
-      else drawRig(ctx, shifted, u, this.time, z, this.yaw);
+      if (doll && doll.complete && doll.naturalWidth > 0 && doll.naturalHeight > 0) {
+        this.drawMapDoll(u.id, doll, x, feetY, z, face, elite);
+      } else {
+        this.rememberRig(u.id, drawRig(ctx, shifted, u, this.time, z, this.yaw));
+      }
     }
 
     this.drawFacingWedge(u, map, x, feetY, z);
@@ -1716,7 +1968,7 @@ export class Renderer {
     ctx.restore();
 
     ctx.save();
-    if (u.acted) ctx.globalAlpha *= 0.45;
+    if (isPlayerControlled(u) && u.acted) ctx.globalAlpha *= 0.45;
 
     const bw = 22 * scale;
     const ratio = Math.max(0, u.hp / u.maxHp);
