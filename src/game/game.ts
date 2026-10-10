@@ -750,7 +750,34 @@ export class Game {
     ) {
       return;
     }
-    const tile = this.renderer.hitTile(p.x, p.y, this.map);
+    // Billboards rise above the feet, so a body or ring hit is that unit's cell.
+    // A miss still uses the tile prism, which keeps empty move tiles selectable.
+    // With a mover and a field, an empty reachable prism wins over a body that covers it.
+    const pickUnit =
+      this.phase === "select" ||
+      this.phase === "forecast" ||
+      this.phase === "skillAim" ||
+      this.phase === "itemAim";
+    const mover = this.selected;
+    const field = this.field;
+    let tile: Vec2 | null;
+    if (this.phase === "select" && mover && field) {
+      const prism = this.renderer.hitTile(p.x, p.y, this.map);
+      if (
+        prism &&
+        field.cost.has(key(prism.x, prism.y)) &&
+        !this.unitAt(prism.x, prism.y) &&
+        (prism.x !== mover.x || prism.y !== mover.y)
+      ) {
+        tile = prism;
+      } else {
+        const unit = this.renderer.hitUnit(p.x, p.y, this.map, this.units);
+        tile = unit ? { x: unit.x, y: unit.y } : prism;
+      }
+    } else {
+      const unit = pickUnit ? this.renderer.hitUnit(p.x, p.y, this.map, this.units) : null;
+      tile = unit ? { x: unit.x, y: unit.y } : this.renderer.hitTile(p.x, p.y, this.map);
+    }
     if (this.phase === "forecast") {
       if (!tile || (this.forecast && (tile.x !== this.forecast.target.x || tile.y !== this.forecast.target.y))) {
         this.backFromForecast();

@@ -99,6 +99,24 @@ function hash01(n: number): number {
   return s - Math.floor(s);
 }
 
+/** Elite billboards (drawUnit / drawMapDoll) are drawn this much taller. */
+const ELITE_SCALE = 1.12;
+/** Sprite feet sit this many zoom-pixels below the projected ground point. */
+const FEET_DROP = 2;
+/** Selection ring under the feet, multiplied by eliteScale * zoom. Center is FEET + RING_DROP * zoom. */
+const RING_RX = 12.2;
+const RING_RY = 5.4;
+const RING_DROP = 1;
+/**
+ * Body hit width / billboard height.
+ * drawMapDoll sprites are rigDrawHeight tall and about half as wide; rigs use the same figure box.
+ */
+const UNIT_BODY_ASPECT = 0.5;
+
+function unitDrawHeight(zoom: number, elite: boolean): number {
+  return rigDrawHeight(zoom) * (elite ? ELITE_SCALE : 1);
+}
+
 export class Renderer {
   readonly canvas: HTMLCanvasElement;
   readonly ctx: CanvasRenderingContext2D;
@@ -312,6 +330,36 @@ export class Renderer {
       if (this.hitPrism(sx, sy, t)) hit = c;
     }
     return hit;
+  }
+
+  /**
+   * Living unit whose on-screen body or feet ring contains the pointer.
+   * Later cells in cellsInDrawOrder are in front, matching draw().
+   */
+  hitUnit(sx: number, sy: number, map: GameMap, units: Unit[]): Unit | null {
+    this.syncMap(map);
+    const drawn = new Map<string, Unit>();
+    for (const u of units) {
+      if (!u.dead) drawn.set(key(u.x, u.y), u);
+    }
+    let hit: Unit | null = null;
+    for (const c of this.cellsInDrawOrder(map)) {
+      const u = drawn.get(key(c.x, c.y));
+      if (u && this.unitContainsPoint(sx, sy, u, map)) hit = u;
+    }
+    return hit;
+  }
+
+  private unitContainsPoint(sx: number, sy: number, u: Unit, map: GameMap): boolean {
+    const { x, feetY, z, scale, dh } = this.unitPose(u, map);
+    const dw = dh * UNIT_BODY_ASPECT;
+    if (sx >= x - dw / 2 && sx <= x + dw / 2 && sy >= feetY - dh && sy <= feetY) return true;
+    const rx = RING_RX * scale;
+    const ry = RING_RY * scale;
+    if (rx <= 0 || ry <= 0) return false;
+    const nx = (sx - x) / rx;
+    const ny = (sy - (feetY + RING_DROP * z)) / ry;
+    return nx * nx + ny * ny <= 1;
   }
 
   private hitPrism(sx: number, sy: number, t: Tile): boolean {
@@ -1039,6 +1087,41 @@ export class Renderer {
     };
   }
 
+  /** Feet anchor shared with hitUnit so the body box stays on the drawn sprite. */
+  private unitPose(u: Unit, map: GameMap): {
+    x: number;
+    feetY: number;
+    z: number;
+    scale: number;
+    dh: number;
+    dx: number;
+    dy: number;
+    ground: Vec2;
+    face: Vec2;
+    elite: boolean;
+  } {
+    const ground = this.worldToScreen(u.x, u.y, map.heightAt(u.x, u.y));
+    const z = this.cam.zoom;
+    const elite = u.role === "elite";
+    const mul = elite ? ELITE_SCALE : 1;
+    const face = yawDir(DIRS[u.dir].x, DIRS[u.dir].y, this.yaw);
+    const lunge = u.lunge || 0;
+    const dx = (face.x - face.y) * 6 * z * lunge;
+    const dy = (face.x + face.y) * 3 * z * lunge;
+    return {
+      x: ground.x + dx,
+      feetY: ground.y + dy + FEET_DROP * z,
+      z,
+      scale: mul * z,
+      dh: unitDrawHeight(z, elite),
+      dx,
+      dy,
+      ground,
+      face,
+      elite,
+    };
+  }
+
   private drawMapDoll(
     image: HTMLImageElement,
     x: number,
@@ -1048,7 +1131,7 @@ export class Renderer {
     elite: boolean,
     mirror = true,
   ): void {
-    const dh = rigDrawHeight(z) * (elite ? 1.12 : 1);
+    const dh = unitDrawHeight(z, elite);
     const dw = dh * image.naturalWidth / image.naturalHeight;
     const ctx = this.ctx;
     ctx.save();
@@ -1063,30 +1146,21 @@ export class Renderer {
 
   private drawUnit(u: Unit, map: GameMap, overlays: DrawOverlays): void {
     const ctx = this.ctx;
-    const h = map.heightAt(u.x, u.y);
-    const p = this.worldToScreen(u.x, u.y, h);
-    const z = this.cam.zoom;
-    const elite = u.role === "elite";
-    const scale = (elite ? 1.12 : 1) * z;
+    const { x, feetY, z, scale, dh, dx, dy, ground: p, face, elite } = this.unitPose(u, map);
     const accent = factionColor(u);
-    const face = yawDir(DIRS[u.dir].x, DIRS[u.dir].y, this.yaw);
-    const dx = (face.x - face.y) * 6 * z * (u.lunge || 0);
-    const dy = (face.x + face.y) * 3 * z * (u.lunge || 0);
-    const x = p.x + dx;
-    const feetY = p.y + dy + 2 * z;
     const done = u.acted;
     ctx.save();
     if (done) ctx.globalAlpha *= 0.45;
 
     ctx.fillStyle = "rgba(0,0,0,0.4)";
     ctx.beginPath();
-    ctx.ellipse(x, feetY + 1 * z, 11 * scale, 4.8 * scale, 0, 0, Math.PI * 2);
+    ctx.ellipse(x, feetY + RING_DROP * z, 11 * scale, 4.8 * scale, 0, 0, Math.PI * 2);
     ctx.fill();
 
     ctx.strokeStyle = accent;
     ctx.lineWidth = Math.max(2, 2.2 * z);
     ctx.beginPath();
-    ctx.ellipse(x, feetY + 1 * z, 12.2 * scale, 5.4 * scale, 0, 0, Math.PI * 2);
+    ctx.ellipse(x, feetY + RING_DROP * z, RING_RX * scale, RING_RY * scale, 0, 0, Math.PI * 2);
     ctx.stroke();
     ctx.strokeStyle = "rgba(8,8,12,0.85)";
     ctx.lineWidth = 1;
@@ -1146,7 +1220,6 @@ export class Renderer {
 
     this.drawFacingWedge(u, map, x, feetY, z);
 
-    const dh = rigDrawHeight(z) * (elite ? 1.12 : 1);
     const bw = 22 * scale;
     const ratio = Math.max(0, u.hp / u.maxHp);
     const barY = feetY - dh - 4 * scale;
