@@ -517,6 +517,28 @@ export class Game {
     return Promise.race([ready, delay(VN_PORTRAIT_WAIT_MS)]);
   }
 
+  /**
+   * Point the VN bust at a portrait. If the copy we get is broken (a stale or
+   * non-image response from an old cache), retry once straight from the network
+   * (`?r=` bypasses the service worker cache), and hide the element rather than
+   * ever showing a broken-image box.
+   */
+  private setVnBust(src: string): void {
+    const img = this.vnBust;
+    img.style.visibility = "";
+    img.onerror = () => {
+      if (!img.src.includes("?r=")) {
+        img.src = `${src}?r=${Date.now()}`;
+        return;
+      }
+      img.style.visibility = "hidden";
+    };
+    img.onload = () => {
+      if (img.naturalWidth === 0) img.style.visibility = "hidden";
+    };
+    img.src = src;
+  }
+
   /** Display one deliberate, tap-to-advance story beat over the live board. */
   showVn({ speaker, side, text }: MissionBeat): Promise<void> {
     this.vnOpen = true;
@@ -524,8 +546,8 @@ export class Game {
     this.vn.classList.toggle("left", side !== "right");
     this.vnBust.decoding = "async";
     if ("fetchPriority" in this.vnBust) this.vnBust.fetchPriority = "high";
-    this.vnBust.src = VN_SPRITES[speaker];
-    this.vnBust.alt = speaker;
+    this.setVnBust(VN_SPRITES[speaker]);
+    this.vnBust.alt = "";
     this.vnName.textContent = speaker;
     this.vnText.textContent = text;
     return this.waitForSpeakerPortrait(speaker).then(() => {
@@ -544,6 +566,7 @@ export class Game {
     this.vnDone = null;
     this.vnOpen = false;
     this.vn.hidden = true;
+    this.vnBust.onerror = null;
     this.vnBust.removeAttribute("src");
     done();
     this.syncUi();
