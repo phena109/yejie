@@ -467,10 +467,12 @@ const RING_RX = 12.2;
 const RING_RY = 5.4;
 const RING_DROP = 1;
 /**
- * Body hit width / billboard height.
+ * Fallback body width / billboard height, used only before a frame has cached a draw rect.
  * drawMapDoll sprites are rigDrawHeight tall and about half as wide; rigs use the same figure box.
  */
 const UNIT_BODY_ASPECT = 0.5;
+/** Fraction of the drawn sprite width that counts as the body, so neighbours are not stolen. */
+const UNIT_HIT_WIDTH = 0.7;
 /** Occlusion ghost. Full-opacity source, drawn over whatever hid the body. */
 const GHOST_ALPHA = 0.45;
 const MAP_ANGLES = ["front", "ne", "right", "se", "back", "sw", "left", "nw"] as const;
@@ -709,9 +711,9 @@ export class Renderer {
   }
 
   /**
-   * Living unit whose on-screen body or feet ring contains the pointer.
+   * Living unit whose drawn body or feet ring contains the pointer.
    * Later cells in cellsInDrawOrder are in front, matching draw().
-   * A cell may hold several living units; the one drawn last wins.
+   * A cell may hold several living units; the one drawn last (front-most) wins.
    */
   hitUnit(sx: number, sy: number, map: GameMap, units: Unit[]): Unit | null {
     this.syncMap(map);
@@ -735,15 +737,28 @@ export class Renderer {
   }
 
   private unitContainsPoint(sx: number, sy: number, u: Unit, map: GameMap): boolean {
-    const { x, feetY, z, scale, dh } = this.unitPose(u, map);
-    const dw = dh * UNIT_BODY_ASPECT;
-    if (sx >= x - dw / 2 && sx <= x + dw / 2 && sy >= feetY - dh && sy <= feetY) return true;
-    const rx = RING_RX * scale;
-    const ry = RING_RY * scale;
+    const pose = this.unitPose(u, map);
+    if (rectHasPoint(this.unitBodyRect(u, pose), sx, sy)) return true;
+    const rx = RING_RX * pose.scale;
+    const ry = RING_RY * pose.scale;
     if (rx <= 0 || ry <= 0) return false;
-    const nx = (sx - x) / rx;
-    const ny = (sy - (feetY + RING_DROP * z)) / ry;
+    const nx = (sx - pose.x) / rx;
+    const ny = (sy - (pose.feetY + RING_DROP * pose.z)) / ry;
     return nx * nx + ny * ny <= 1;
+  }
+
+  /**
+   * Body box for this frame. Prefer the rect drawMapDoll / drawRig cached for the ghost pass
+   * (full height, about 70% of the drawn width). Until that exists, use the computed billboard.
+   */
+  private unitBodyRect(u: Unit, pose: { x: number; feetY: number; dh: number }): ScreenRect {
+    const stamp = this.bodyStamps.get(u.id);
+    if (stamp && stamp.dw > 0 && stamp.dh > 0) {
+      const w = stamp.dw * UNIT_HIT_WIDTH;
+      return { x: stamp.dx + (stamp.dw - w) / 2, y: stamp.dy, w, h: stamp.dh };
+    }
+    const dw = pose.dh * UNIT_BODY_ASPECT;
+    return { x: pose.x - dw / 2, y: pose.feetY - pose.dh, w: dw, h: pose.dh };
   }
 
   private hitPrism(sx: number, sy: number, t: Tile): boolean {
