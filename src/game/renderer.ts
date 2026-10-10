@@ -335,17 +335,25 @@ export class Renderer {
   /**
    * Living unit whose on-screen body or feet ring contains the pointer.
    * Later cells in cellsInDrawOrder are in front, matching draw().
+   * A cell may hold several living units; the one drawn last wins.
    */
   hitUnit(sx: number, sy: number, map: GameMap, units: Unit[]): Unit | null {
     this.syncMap(map);
-    const drawn = new Map<string, Unit>();
+    const drawn = new Map<string, Unit[]>();
     for (const u of units) {
-      if (!u.dead) drawn.set(key(u.x, u.y), u);
+      if (u.dead) continue;
+      const k = key(u.x, u.y);
+      const list = drawn.get(k);
+      if (list) list.push(u);
+      else drawn.set(k, [u]);
     }
     let hit: Unit | null = null;
     for (const c of this.cellsInDrawOrder(map)) {
-      const u = drawn.get(key(c.x, c.y));
-      if (u && this.unitContainsPoint(sx, sy, u, map)) hit = u;
+      const list = drawn.get(key(c.x, c.y));
+      if (!list) continue;
+      for (const u of list) {
+        if (this.unitContainsPoint(sx, sy, u, map)) hit = u;
+      }
     }
     return hit;
   }
@@ -409,10 +417,13 @@ export class Renderer {
     ctx.clearRect(0, 0, this.w, this.h);
     this.drawBackdrop(map.theme);
 
-    const byTile = new Map<string, Unit>();
+    const byTile = new Map<string, Unit[]>();
     for (const u of units) {
       if (u.dead) continue;
-      byTile.set(key(u.x, u.y), u);
+      const k = key(u.x, u.y);
+      const list = byTile.get(k);
+      if (list) list.push(u);
+      else byTile.set(k, [u]);
     }
 
     const objAt = new Map<string, BoardObj>();
@@ -420,13 +431,21 @@ export class Renderer {
       if (!o.gone) objAt.set(key(o.x, o.y), o);
     }
 
+    const drawn: Unit[] = [];
     for (const c of this.cellsInDrawOrder(map)) {
       this.drawTile(map.tiles[c.y][c.x], map, overlays);
       const o = objAt.get(key(c.x, c.y));
       if (o) this.drawBoardObj(o, map);
-      const u = byTile.get(key(c.x, c.y));
-      if (u) this.drawUnit(u, map, overlays);
+      const stack = byTile.get(key(c.x, c.y));
+      if (!stack) continue;
+      for (const u of stack) {
+        this.drawUnit(u, map, overlays);
+        drawn.push(u);
+      }
     }
+
+    // Rings and names paint after tiles, or a nearer wall clips the feet label.
+    for (const u of drawn) this.drawUnitOverlay(u, map);
 
     this.drawVignette();
     this.drawFloats(floats, map);
@@ -1157,15 +1176,6 @@ export class Renderer {
     ctx.ellipse(x, feetY + RING_DROP * z, 11 * scale, 4.8 * scale, 0, 0, Math.PI * 2);
     ctx.fill();
 
-    ctx.strokeStyle = accent;
-    ctx.lineWidth = Math.max(2, 2.2 * z);
-    ctx.beginPath();
-    ctx.ellipse(x, feetY + RING_DROP * z, RING_RX * scale, RING_RY * scale, 0, 0, Math.PI * 2);
-    ctx.stroke();
-    ctx.strokeStyle = "rgba(8,8,12,0.85)";
-    ctx.lineWidth = 1;
-    ctx.stroke();
-
     if (overlays.selected?.id === u.id) {
       ctx.strokeStyle = accent;
       ctx.lineWidth = 2.2;
@@ -1220,19 +1230,6 @@ export class Renderer {
 
     this.drawFacingWedge(u, map, x, feetY, z);
 
-    const bw = 22 * scale;
-    const ratio = Math.max(0, u.hp / u.maxHp);
-    const barY = feetY - dh - 4 * scale;
-    ctx.fillStyle = "#111018";
-    ctx.fillRect(x - bw / 2, barY, bw, 3.5 * scale);
-    ctx.fillStyle = accent;
-    ctx.fillRect(x - bw / 2, barY, bw * ratio, 3.5 * scale);
-
-    ctx.fillStyle = "#e8eef2";
-    ctx.font = `${Math.max(9, 10 * z)}px sans-serif`;
-    ctx.textAlign = "center";
-    ctx.fillText(u.name.split(" ")[0], x, feetY + 16 * z);
-
     ctx.restore();
 
     if (done) {
@@ -1253,6 +1250,65 @@ export class Renderer {
       ctx.fillText("E", ex, ey + 0.4 * scale);
       ctx.textBaseline = "alphabetic";
     }
+  }
+
+  /** Team ring, HP bar, and name plate. Called after the cell loop so a nearer tile cannot cover them. */
+  private drawUnitOverlay(u: Unit, map: GameMap): void {
+    const ctx = this.ctx;
+    const { x, feetY, z, scale, dh } = this.unitPose(u, map);
+    const accent = factionColor(u);
+
+    ctx.save();
+    ctx.globalAlpha = 0.55;
+    ctx.strokeStyle = accent;
+    ctx.lineWidth = Math.max(2, 2.2 * z);
+    ctx.beginPath();
+    ctx.ellipse(x, feetY + RING_DROP * z, RING_RX * scale, RING_RY * scale, 0, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.strokeStyle = "rgba(8,8,12,0.85)";
+    ctx.lineWidth = 1;
+    ctx.stroke();
+    ctx.restore();
+
+    ctx.save();
+    if (u.acted) ctx.globalAlpha *= 0.45;
+
+    const bw = 22 * scale;
+    const ratio = Math.max(0, u.hp / u.maxHp);
+    const barY = feetY - dh - 4 * scale;
+    ctx.fillStyle = "#111018";
+    ctx.fillRect(x - bw / 2, barY, bw, 3.5 * scale);
+    ctx.fillStyle = accent;
+    ctx.fillRect(x - bw / 2, barY, bw * ratio, 3.5 * scale);
+
+    const text = u.name.split(" ")[0];
+    const fontPx = Math.max(9, 10 * z);
+    ctx.font = `${fontPx}px sans-serif`;
+    ctx.textAlign = "center";
+    ctx.textBaseline = "alphabetic";
+    const metrics = ctx.measureText(text);
+    const padX = Math.max(3, 4 * z);
+    const padY = Math.max(1, 2 * z);
+    const ascent = metrics.actualBoundingBoxAscent > 0 ? metrics.actualBoundingBoxAscent : fontPx * 0.8;
+    const descent = metrics.actualBoundingBoxDescent > 0 ? metrics.actualBoundingBoxDescent : fontPx * 0.22;
+    const plateW = metrics.width + padX * 2;
+    const plateH = ascent + descent + padY * 2;
+    const baseline = feetY + 16 * z;
+    const plateX = x - plateW / 2;
+    const plateY = baseline - ascent - padY;
+    const radius = Math.min(plateH / 2, Math.max(2, 3 * z));
+    ctx.beginPath();
+    ctx.moveTo(plateX + radius, plateY);
+    ctx.arcTo(plateX + plateW, plateY, plateX + plateW, plateY + plateH, radius);
+    ctx.arcTo(plateX + plateW, plateY + plateH, plateX, plateY + plateH, radius);
+    ctx.arcTo(plateX, plateY + plateH, plateX, plateY, radius);
+    ctx.arcTo(plateX, plateY, plateX + plateW, plateY, radius);
+    ctx.closePath();
+    ctx.fillStyle = "rgba(8, 8, 14, 0.88)";
+    ctx.fill();
+    ctx.fillStyle = "#e8eef2";
+    ctx.fillText(text, x, baseline);
+    ctx.restore();
   }
 
   private drawFacingWedge(u: Unit, map: GameMap, x: number, feetY: number, z: number): void {

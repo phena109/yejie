@@ -717,7 +717,7 @@ export class Game {
     audio.play("move");
     this.origin = { x: u.x, y: u.y };
     this.originDir = u.dir;
-    const path = reconstructPath(this.field, dest);
+    const path = this.clampPathEnd(u, reconstructPath(this.field, dest));
     u.anim = "walk";
     u.animStart = performance.now();
     for (let i = 1; i < path.length; i++) {
@@ -726,7 +726,9 @@ export class Game {
       await this.waitMs(MOVE_STEP_MS);
     }
     // Preserve the starting facing during the walk; snap once at the move endpoint.
-    u.dir = dirFromTo(path[path.length - 2], path[path.length - 1]);
+    if (path.length > 1) u.dir = dirFromTo(path[path.length - 2], path[path.length - 1]);
+    u.x = Math.round(u.x);
+    u.y = Math.round(u.y);
     u.anim = "idle";
     u.movedThisTurn = true;
     this.tryPickup(u);
@@ -1149,16 +1151,19 @@ export class Game {
         continue;
       }
       const plan = planEnemy(e, this.map, this.units, protectId, this.intel);
-      if (plan.path.length > 1) {
+      const path = this.clampPathEnd(e, plan.path);
+      if (path.length > 1) {
         e.anim = "walk";
         e.animStart = performance.now();
       }
-      for (let i = 1; i < plan.path.length; i++) {
-        e.x = plan.path[i].x;
-        e.y = plan.path[i].y;
+      for (let step = 1; step < path.length; step++) {
+        e.x = path[step].x;
+        e.y = path[step].y;
         await this.waitMs(MOVE_STEP_MS);
       }
-      if (plan.path.length > 1) e.dir = dirFromTo(plan.path[plan.path.length - 2], plan.path[plan.path.length - 1]);
+      if (path.length > 1) e.dir = dirFromTo(path[path.length - 2], path[path.length - 1]);
+      e.x = Math.round(e.x);
+      e.y = Math.round(e.y);
       e.anim = "idle";
       this.tryPickup(e);
       if (plan.target && !plan.target.dead) {
@@ -1292,6 +1297,18 @@ export class Game {
 
   private unitAt(x: number, y: number): Unit | undefined {
     return this.units.find((u) => !u.dead && u.x === x && u.y === y);
+  }
+
+  /** If the path would finish on another living unit, end on the last free cell. The start cell is always kept. */
+  private clampPathEnd(unit: Unit, path: Vec2[]): Vec2[] {
+    if (path.length === 0) return path;
+    const occupied = (x: number, y: number): boolean =>
+      this.units.some((o) => o.id !== unit.id && !o.dead && o.x === x && o.y === y);
+    const last = path[path.length - 1];
+    if (!occupied(last.x, last.y)) return path;
+    let i = path.length - 1;
+    while (i > 0 && occupied(path[i].x, path[i].y)) i--;
+    return path.slice(0, i + 1);
   }
 
   private tryPickup(u: Unit): void {
