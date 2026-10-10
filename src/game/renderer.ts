@@ -28,6 +28,8 @@ export interface DrawOverlays {
   target: Unit | null;
   inspect: Vec2 | null;
   phase: Phase;
+  /** Unit under the pointer. When omitted, the renderer uses its canvas pointer or `hover`. */
+  hover?: Unit | null;
 }
 
 
@@ -105,6 +107,44 @@ interface BodyStamp {
   dw: number;
   dh: number;
   mirror: boolean;
+}
+
+/** Name plate plus HP bar, measured at the default anchor. Reused across frames. */
+interface LabelSlot {
+  id: string;
+  text: string;
+  accent: string;
+  dim: boolean;
+  pri: number;
+  drawIndex: number;
+  feetY: number;
+  fontPx: number;
+  baseline: number;
+  plateX: number;
+  plateY: number;
+  plateW: number;
+  plateH: number;
+  barX: number;
+  barY: number;
+  barW: number;
+  barH: number;
+  ratio: number;
+  /** Name plate with the HP bar stacked on it. Used once the spread anchor is taken. */
+  compactW: number;
+  compactH: number;
+  /** True when the HP bar stays above the head and the plate stays under the ring. */
+  spread: boolean;
+  ringX: number;
+  ringY: number;
+  ringRx: number;
+  ringRy: number;
+  bodyX: number;
+  bodyY: number;
+  bodyW: number;
+  bodyH: number;
+  dx: number;
+  dy: number;
+  z: number;
 }
 
 function rectsOverlap(a: ScreenRect, b: ScreenRect): boolean {
@@ -475,6 +515,10 @@ const UNIT_BODY_ASPECT = 0.5;
 const UNIT_HIT_WIDTH = 0.7;
 /** Occlusion ghost. Full-opacity source, drawn over whatever hid the body. */
 const GHOST_ALPHA = 0.45;
+/** Gap between label blocks, and between a side slot and the feet ring. */
+const LABEL_MARGIN = 2;
+/** Draw a leader when a plate leaves its default anchor by more than this. */
+const LABEL_LEADER_MIN = 6;
 const MAP_ANGLES = ["front", "ne", "right", "se", "back", "sw", "left", "nw"] as const;
 
 function unitDrawHeight(zoom: number, elite: boolean): number {
@@ -532,6 +576,18 @@ export class Renderer {
   private readonly rigSnaps = new Map<string, HTMLCanvasElement>();
   private ghostCanvas: HTMLCanvasElement | null = null;
   private ghostCtx: CanvasRenderingContext2D | null = null;
+  /** Placed name plates from the last draw(), in canvas coordinates. */
+  labelRects: { id: string; x: number; y: number; w: number; h: number }[] = [];
+  /** Unit under the pointer. Pointer moves refresh this; a preset value is kept while the pointer is outside. */
+  hover: Unit | null = null;
+  private pointerX = 0;
+  private pointerY = 0;
+  private pointerInside = false;
+  private labelCount = 0;
+  private placedCount = 0;
+  private readonly labelPool: LabelSlot[] = [];
+  private readonly labelOrder: number[] = [];
+  private readonly placedRects: ScreenRect[] = [];
 
   tileH(): number {
     return TILE_W * Math.sin((this.pitch * Math.PI) / 180);
@@ -576,6 +632,7 @@ export class Renderer {
       image.src = `./sprites/dana-${angle}.png`;
     }
     this.resize();
+    this.trackCanvasPointer();
   }
 
   resize(): void {
@@ -891,7 +948,7 @@ export class Renderer {
     for (const u of drawn) this.drawOccludedGhost(u, map, cells, cellIndex, objAt);
 
     // Rings and names paint after tiles, or a nearer wall clips the feet label.
-    for (const u of drawn) this.drawUnitOverlay(u, map);
+    this.drawUnitOverlays(drawn, map, overlays);
 
     this.drawVignette();
     this.drawFloats(floats, map);
@@ -1964,51 +2021,340 @@ export class Renderer {
     }
   }
 
-  /** Team ring, HP bar, and name plate. Called after the cell loop so a nearer tile cannot cover them. */
-  private drawUnitOverlay(u: Unit, map: GameMap): void {
-    const ctx = this.ctx;
-    const { x, feetY, z, scale, dh } = this.unitPose(u, map);
-    const accent = factionColor(u);
+  private trackCanvasPointer(): void {
+    const canvas = this.canvas;
+    if (typeof canvas.addEventListener !== "function") return;
+    canvas.addEventListener("pointermove", (e) => this.trackPointer(e));
+    canvas.addEventListener("pointerdown", (e) => this.trackPointer(e));
+    canvas.addEventListener("pointerleave", () => {
+      this.pointerInside = false;
+      this.hover = null;
+    });
+  }
 
+  private trackPointer(e: PointerEvent): void {
+    const r = this.canvas.getBoundingClientRect();
+    this.pointerX = e.clientX - r.left;
+    this.pointerY = e.clientY - r.top;
+    this.pointerInside = true;
+  }
+
+  /** Front-most living unit under the pointer, matching hitUnit without rebuilding the cell list. */
+  private hoveredUnit(drawn: Unit[], map: GameMap, overlays: DrawOverlays): Unit | null {
+    if (overlays.hover !== undefined) return overlays.hover;
+    if (!this.pointerInside) return this.hover;
+    let found: Unit | null = null;
+    for (let i = drawn.length - 1; i >= 0; i--) {
+      const u = drawn[i];
+      if (this.unitContainsPoint(this.pointerX, this.pointerY, u, map)) {
+        found = u;
+        break;
+      }
+    }
+    this.hover = found;
+    return found;
+  }
+
+  private labelSlot(i: number): LabelSlot {
+    let s = this.labelPool[i];
+    if (!s) {
+      s = {
+        id: "",
+        text: "",
+        accent: "#fff",
+        dim: false,
+        pri: 2,
+        drawIndex: 0,
+        feetY: 0,
+        fontPx: 9,
+        baseline: 0,
+        plateX: 0,
+        plateY: 0,
+        plateW: 0,
+        plateH: 0,
+        barX: 0,
+        barY: 0,
+        barW: 0,
+        barH: 0,
+        ratio: 1,
+        compactW: 0,
+        compactH: 0,
+        spread: true,
+        ringX: 0,
+        ringY: 0,
+        ringRx: 1,
+        ringRy: 1,
+        bodyX: 0,
+        bodyY: 0,
+        bodyW: 0,
+        bodyH: 0,
+        dx: 0,
+        dy: 0,
+        z: 1,
+      };
+      this.labelPool[i] = s;
+    }
+    return s;
+  }
+
+  /** Team rings stay on the tile centre. Plates and HP bars share one block and move only to stay apart. */
+  private drawUnitOverlays(drawn: Unit[], map: GameMap, overlays: DrawOverlays): void {
+    const n = drawn.length;
+    this.labelCount = n;
+    this.placedCount = 0;
+    if (n === 0) {
+      this.labelRects.length = 0;
+      return;
+    }
+
+    const ctx = this.ctx;
+    const z = this.cam.zoom;
+    const fontPx = Math.max(9, 10 * z);
+    ctx.font = `${fontPx}px sans-serif`;
+    ctx.textAlign = "center";
+    ctx.textBaseline = "alphabetic";
+    const selId = overlays.selected && !overlays.selected.dead ? overlays.selected.id : "";
+    const hovered = this.hoveredUnit(drawn, map, overlays);
+    const hovId = hovered && !hovered.dead ? hovered.id : "";
+
+    for (let i = 0; i < n; i++) {
+      const u = drawn[i];
+      const s = this.labelSlot(i);
+      const pose = this.unitPose(u, map);
+      const { x, feetY, scale, dh } = pose;
+      const text = u.name.split(" ")[0];
+      const metrics = ctx.measureText(text);
+      const padX = Math.max(3, 4 * z);
+      const padY = Math.max(1, 2 * z);
+      const ascent = metrics.actualBoundingBoxAscent > 0 ? metrics.actualBoundingBoxAscent : fontPx * 0.8;
+      const descent = metrics.actualBoundingBoxDescent > 0 ? metrics.actualBoundingBoxDescent : fontPx * 0.22;
+      const plateW = metrics.width + padX * 2;
+      const plateH = ascent + descent + padY * 2;
+      const baseline = feetY + 16 * z;
+      const plateX = x - plateW / 2;
+      const plateY = baseline - ascent - padY;
+      const barW = 22 * scale;
+      const barH = 3.5 * scale;
+      const barX = x - barW / 2;
+      const barY = feetY - dh - 4 * scale;
+      const stamp = this.bodyStamps.get(u.id);
+      s.id = u.id;
+      s.text = text;
+      s.accent = factionColor(u);
+      s.dim = isPlayerControlled(u) && u.acted;
+      s.pri = u.id === selId ? 0 : u.id === hovId ? 1 : 2;
+      s.drawIndex = i;
+      s.feetY = feetY;
+      s.fontPx = fontPx;
+      s.baseline = baseline;
+      s.plateX = plateX;
+      s.plateY = plateY;
+      s.plateW = plateW;
+      s.plateH = plateH;
+      s.barX = barX;
+      s.barY = barY;
+      s.barW = barW;
+      s.barH = barH;
+      s.ratio = Math.max(0, u.hp / u.maxHp);
+      s.compactW = Math.max(plateW, barW);
+      s.compactH = barH + plateH;
+      s.spread = true;
+      s.ringX = x;
+      s.ringY = feetY + RING_DROP * z;
+      s.ringRx = RING_RX * scale;
+      s.ringRy = RING_RY * scale;
+      s.dx = 0;
+      s.dy = 0;
+      s.z = z;
+      if (stamp && stamp.dw > 0 && stamp.dh > 0) {
+        s.bodyX = stamp.dx;
+        s.bodyY = stamp.dy;
+        s.bodyW = stamp.dw;
+        s.bodyH = stamp.dh;
+      } else {
+        const dw = dh * UNIT_BODY_ASPECT;
+        s.bodyX = x - dw / 2;
+        s.bodyY = feetY - dh;
+        s.bodyW = dw;
+        s.bodyH = dh;
+      }
+    }
+
+    this.labelOrder.length = n;
+    for (let i = 0; i < n; i++) this.labelOrder[i] = i;
+    const pool = this.labelPool;
+    this.labelOrder.sort((ia, ib) => {
+      const a = pool[ia];
+      const b = pool[ib];
+      if (a.pri !== b.pri) return a.pri - b.pri;
+      if (a.feetY !== b.feetY) return b.feetY - a.feetY;
+      return b.drawIndex - a.drawIndex;
+    });
+    for (let i = 0; i < n; i++) this.placeLabel(pool[this.labelOrder[i]]);
+
+    for (let i = 0; i < n; i++) this.paintUnitRing(pool[i]);
+    for (let i = 0; i < n; i++) this.paintUnitLabel(pool[i]);
+
+    if (this.labelRects.length > n) this.labelRects.length = n;
+    for (let i = 0; i < n; i++) {
+      const s = pool[i];
+      let r = this.labelRects[i];
+      if (!r) {
+        r = { id: "", x: 0, y: 0, w: 0, h: 0 };
+        this.labelRects[i] = r;
+      }
+      r.id = s.id;
+      r.x = s.plateX + s.dx;
+      r.y = s.plateY + s.dy;
+      r.w = s.plateW;
+      r.h = s.plateH;
+    }
+  }
+
+  /** Spread anchor: plate under the ring and HP bar over the head. Offsets use the compact stack. */
+  private labelClear(s: LabelSlot, ox: number, oy: number, spread: boolean, bodies: boolean): boolean {
+    if (spread) {
+      if (this.hitsPlaced(s.plateX, s.plateY, s.plateW, s.plateH)) return false;
+      if (this.hitsPlaced(s.barX, s.barY, s.barW, s.barH)) return false;
+      if (!bodies) return true;
+      if (this.hitsOtherBody(s.id, s.plateX, s.plateY, s.plateW, s.plateH)) return false;
+      return !this.hitsOtherBody(s.id, s.barX, s.barY, s.barW, s.barH);
+    }
+    const x = s.ringX + ox - s.compactW / 2;
+    const y = s.plateY + oy - s.barH;
+    if (this.hitsPlaced(x, y, s.compactW, s.compactH)) return false;
+    if (!bodies) return true;
+    return !this.hitsOtherBody(s.id, x, y, s.compactW, s.compactH);
+  }
+
+  private placeLabel(s: LabelSlot): void {
+    const leftDx = -(s.ringRx + LABEL_MARGIN + s.compactW / 2);
+    const rightDx = s.ringRx + LABEL_MARGIN + s.compactW / 2;
+    const aboveDy = s.barY - LABEL_MARGIN - (s.plateY + s.plateH);
+    const step = Math.max(LABEL_MARGIN, s.compactH + LABEL_MARGIN);
+    const opts: Array<[number, number, boolean]> = [
+      [0, 0, true],
+      [leftDx, 0, false],
+      [rightDx, 0, false],
+      [0, aboveDy, false],
+    ];
+    let fbX = 0;
+    let fbY = 0;
+    let fbSpread = true;
+    let haveFb = false;
+    const consider = (ox: number, oy: number, spread: boolean): boolean => {
+      const clearP = this.labelClear(s, ox, oy, spread, false);
+      if (clearP && !haveFb) {
+        fbX = ox;
+        fbY = oy;
+        fbSpread = spread;
+        haveFb = true;
+      }
+      if (clearP && this.labelClear(s, ox, oy, spread, true)) {
+        this.commitLabel(s, ox, oy, spread);
+        return true;
+      }
+      return false;
+    };
+    for (const [ox, oy, spread] of opts) {
+      if (consider(ox, oy, spread)) return;
+    }
+    const limit = Math.max(24, this.labelCount + 8);
+    for (let k = 1; k <= limit; k++) {
+      if (consider(0, k * step, false)) return;
+    }
+    if (!haveFb) {
+      const extra = limit + this.labelCount + 4;
+      for (let k = limit + 1; k <= extra; k++) {
+        if (this.labelClear(s, 0, k * step, false, false)) {
+          this.commitLabel(s, 0, k * step, false);
+          return;
+        }
+      }
+      this.commitLabel(s, 0, (extra + 1) * step, false);
+      return;
+    }
+    this.commitLabel(s, fbX, fbY, fbSpread);
+  }
+
+  private commitLabel(s: LabelSlot, ox: number, oy: number, spread: boolean): void {
+    s.dx = ox;
+    s.dy = oy;
+    s.spread = spread;
+    if (spread) {
+      this.pushPlaced(s.plateX, s.plateY, s.plateW, s.plateH);
+      this.pushPlaced(s.barX, s.barY, s.barW, s.barH);
+      return;
+    }
+    this.pushPlaced(s.ringX + ox - s.compactW / 2, s.plateY + oy - s.barH, s.compactW, s.compactH);
+  }
+
+  private pushPlaced(x: number, y: number, w: number, h: number): void {
+    let p = this.placedRects[this.placedCount];
+    if (!p) {
+      p = { x: 0, y: 0, w: 0, h: 0 };
+      this.placedRects[this.placedCount] = p;
+    }
+    p.x = x;
+    p.y = y;
+    p.w = w;
+    p.h = h;
+    this.placedCount++;
+  }
+
+  private hitsPlaced(x: number, y: number, w: number, h: number): boolean {
+    const m = LABEL_MARGIN;
+    const rects = this.placedRects;
+    for (let i = 0; i < this.placedCount; i++) {
+      const p = rects[i];
+      if (x < p.x + p.w + m && x + w + m > p.x && y < p.y + p.h + m && y + h + m > p.y) return true;
+    }
+    return false;
+  }
+
+  private hitsOtherBody(id: string, x: number, y: number, w: number, h: number): boolean {
+    const pool = this.labelPool;
+    for (let i = 0; i < this.labelCount; i++) {
+      const o = pool[i];
+      if (o.id === id) continue;
+      if (x < o.bodyX + o.bodyW && x + w > o.bodyX && y < o.bodyY + o.bodyH && y + h > o.bodyY) return true;
+    }
+    return false;
+  }
+
+  private paintUnitRing(s: LabelSlot): void {
+    const ctx = this.ctx;
     ctx.save();
     ctx.globalAlpha = 0.55;
-    ctx.strokeStyle = accent;
-    ctx.lineWidth = Math.max(2, 2.2 * z);
+    ctx.strokeStyle = s.accent;
+    ctx.lineWidth = Math.max(2, 2.2 * s.z);
     ctx.beginPath();
-    ctx.ellipse(x, feetY + RING_DROP * z, RING_RX * scale, RING_RY * scale, 0, 0, Math.PI * 2);
+    ctx.ellipse(s.ringX, s.ringY, s.ringRx, s.ringRy, 0, 0, Math.PI * 2);
     ctx.stroke();
     ctx.strokeStyle = "rgba(8,8,12,0.85)";
     ctx.lineWidth = 1;
     ctx.stroke();
     ctx.restore();
+  }
 
+  private paintUnitLabel(s: LabelSlot): void {
+    const ctx = this.ctx;
+    const ox = s.dx;
+    const oy = s.dy;
+    if (ox * ox + oy * oy > LABEL_LEADER_MIN * LABEL_LEADER_MIN) this.paintLeader(s);
     ctx.save();
-    if (isPlayerControlled(u) && u.acted) ctx.globalAlpha *= 0.45;
-
-    const bw = 22 * scale;
-    const ratio = Math.max(0, u.hp / u.maxHp);
-    const barY = feetY - dh - 4 * scale;
+    if (s.dim) ctx.globalAlpha *= 0.45;
+    const barX = s.spread ? s.barX : s.ringX + ox - s.barW / 2;
+    const barY = s.spread ? s.barY : s.plateY + oy - s.barH;
     ctx.fillStyle = "#111018";
-    ctx.fillRect(x - bw / 2, barY, bw, 3.5 * scale);
-    ctx.fillStyle = accent;
-    ctx.fillRect(x - bw / 2, barY, bw * ratio, 3.5 * scale);
-
-    const text = u.name.split(" ")[0];
-    const fontPx = Math.max(9, 10 * z);
-    ctx.font = `${fontPx}px sans-serif`;
-    ctx.textAlign = "center";
-    ctx.textBaseline = "alphabetic";
-    const metrics = ctx.measureText(text);
-    const padX = Math.max(3, 4 * z);
-    const padY = Math.max(1, 2 * z);
-    const ascent = metrics.actualBoundingBoxAscent > 0 ? metrics.actualBoundingBoxAscent : fontPx * 0.8;
-    const descent = metrics.actualBoundingBoxDescent > 0 ? metrics.actualBoundingBoxDescent : fontPx * 0.22;
-    const plateW = metrics.width + padX * 2;
-    const plateH = ascent + descent + padY * 2;
-    const baseline = feetY + 16 * z;
-    const plateX = x - plateW / 2;
-    const plateY = baseline - ascent - padY;
-    const radius = Math.min(plateH / 2, Math.max(2, 3 * z));
+    ctx.fillRect(barX, barY, s.barW, s.barH);
+    ctx.fillStyle = s.accent;
+    ctx.fillRect(barX, barY, s.barW * s.ratio, s.barH);
+    const plateX = s.plateX + ox;
+    const plateY = s.plateY + oy;
+    const plateW = s.plateW;
+    const plateH = s.plateH;
+    const radius = Math.min(plateH / 2, Math.max(2, 3 * s.z));
     ctx.beginPath();
     ctx.moveTo(plateX + radius, plateY);
     ctx.arcTo(plateX + plateW, plateY, plateX + plateW, plateY + plateH, radius);
@@ -2019,7 +2365,49 @@ export class Renderer {
     ctx.fillStyle = "rgba(8, 8, 14, 0.88)";
     ctx.fill();
     ctx.fillStyle = "#e8eef2";
-    ctx.fillText(text, x, baseline);
+    ctx.font = `${s.fontPx}px sans-serif`;
+    ctx.textAlign = "center";
+    ctx.textBaseline = "alphabetic";
+    ctx.fillText(s.text, s.ringX + ox, s.baseline + oy);
+    ctx.restore();
+  }
+
+  /** Thin team-coloured line from the plate edge to the feet ring. */
+  private paintLeader(s: LabelSlot): void {
+    if (!(s.ringRx > 0) || !(s.ringRy > 0)) return;
+    const px = s.plateX + s.dx;
+    const py = s.plateY + s.dy;
+    const cx = px + s.plateW / 2;
+    const cy = py + s.plateH / 2;
+    const dx = s.ringX - cx;
+    const dy = s.ringY - cy;
+    let t = Infinity;
+    if (dx !== 0) {
+      const edge = dx > 0 ? px + s.plateW : px;
+      const tt = (edge - cx) / dx;
+      if (tt > 0) t = Math.min(t, tt);
+    }
+    if (dy !== 0) {
+      const edge = dy > 0 ? py + s.plateH : py;
+      const tt = (edge - cy) / dy;
+      if (tt > 0) t = Math.min(t, tt);
+    }
+    if (!Number.isFinite(t)) return;
+    const x0 = cx + dx * t;
+    const y0 = cy + dy * t;
+    const ang = Math.atan2((cy - s.ringY) / s.ringRy, (cx - s.ringX) / s.ringRx);
+    const x1 = s.ringX + Math.cos(ang) * s.ringRx;
+    const y1 = s.ringY + Math.sin(ang) * s.ringRy;
+    const ctx = this.ctx;
+    ctx.save();
+    ctx.globalAlpha = 0.6;
+    ctx.strokeStyle = s.accent;
+    ctx.lineWidth = 1;
+    ctx.lineCap = "butt";
+    ctx.beginPath();
+    ctx.moveTo(x0, y0);
+    ctx.lineTo(x1, y1);
+    ctx.stroke();
     ctx.restore();
   }
 
