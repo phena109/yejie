@@ -100,7 +100,7 @@ export function makeSkillForecast(actor: Unit, target: Unit, map: GameMap): Fore
       actor,
       target,
       label: `${actor.skillName}　${actor.name} → ${target.name}`,
-      detail: `回復 ${heal} 生命`,
+      detail: `預覽　生命 ${target.hp} → ${Math.min(target.maxHp, target.hp + heal)} / ${target.maxHp}（+${Math.min(heal, target.maxHp - target.hp)}）`,
       dmg: 0,
       heal,
       skip: false,

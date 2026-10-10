@@ -1042,6 +1042,8 @@ export class Game {
     if (this.phase !== "forecast" || !this.forecast || this.busy) return;
     const f = this.forecast;
     this.busy = true;
+    // The preview panel closes the moment the action is committed.
+    this.syncUi();
     const actor = f.actor;
     if (f.kind === "object" && f.objectId) {
       const obj = this.map.objects.find((o) => o.id === f.objectId);
@@ -1092,9 +1094,12 @@ export class Game {
     else audio.play(f.kind === "skill" ? "skill" : "attack");
     await this.waitMs(magic ? CAST_MS : ATTACK_MS);
     if (f.heal) {
+      const before = target.hp;
       target.hp = Math.min(target.maxHp, target.hp + f.heal);
-      this.spawnFloat(target, `+${f.heal}`, "#7dffb3");
-      this.log = `${actor.name} 為 ${target.name} 回復 ${f.heal}`;
+      const gained = target.hp - before;
+      this.spawnFloat(target, `+${gained}`, "#7dffb3");
+      this.log = `${actor.name} 為 ${target.name} 回復 ${gained}　生命 ${before} → ${target.hp} / ${target.maxHp}`;
+      this.syncUi();
     } else {
       target.hp = Math.max(0, target.hp - f.dmg);
       audio.play("hit");
@@ -1110,6 +1115,7 @@ export class Game {
         this.log = `${target.name} 倒下。`;
         this.tryEnemyDrop(target);
       }
+      this.syncUi();
     }
     if (f.kind === "skill") actor.skillUsed = true;
     actor.actedThisTurn = true;
@@ -2037,7 +2043,7 @@ export class Game {
       this.chip.hidden = true;
     }
 
-    if (this.forecast && this.phase === "forecast") {
+    if (this.forecast && this.phase === "forecast" && !this.busy) {
       this.forecastEl.hidden = false;
       const cls = this.forecast.heal ? "good" : "bad";
       this.forecastEl.innerHTML = `<div><b>${this.forecast.label}</b></div><div class="${cls}">${this.forecast.detail}</div><div>點確認出手，取消返回。</div>`;
