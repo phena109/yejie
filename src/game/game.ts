@@ -243,6 +243,26 @@ export class Game {
         this.advanceVn();
       }
     });
+    document.addEventListener("keydown", (e) => {
+      if (e.key !== "Escape" || e.repeat) return;
+      if (!this.confirmEl.hidden) {
+        e.preventDefault();
+        this.confirmNo();
+        return;
+      }
+      if (this.modalKind !== "off") {
+        e.preventDefault();
+        this.closeModal();
+        return;
+      }
+      if (this.pauseOpen) {
+        e.preventDefault();
+        this.closePause();
+        return;
+      }
+      if (this.vnOpen) return;
+      if (!this.title.hidden || !this.briefing.hidden) return;
+    });
     document.querySelectorAll<HTMLButtonElement>("[data-test-mission]").forEach((button) => {
       button.addEventListener("click", () => this.jumpToMission(Number(button.dataset.testMission)));
     });
