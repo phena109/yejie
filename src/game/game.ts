@@ -141,7 +141,8 @@ export class Game {
   pauseOpen = false;
   private vnOpen = false;
   private vnDone: (() => void) | null = null;
-  private m1IntroPlayed = false;
+  /** Mission indexes whose opening VN has already played. Reset per mission in resetBattle. */
+  private introPlayed = new Set<number>();
   private m1MidBeatPlayed = false;
 
   renderer: Renderer;
@@ -547,8 +548,9 @@ export class Game {
   }
 
   private async playMissionIntro(): Promise<void> {
-    if (this.missionIndex !== 0 || this.m1IntroPlayed) return;
-    this.m1IntroPlayed = true;
+    if (this.missionIndex < 0 || this.missionIndex >= MISSIONS.length) return;
+    if (this.introPlayed.has(this.missionIndex)) return;
+    this.introPlayed.add(this.missionIndex);
     const sides: VnSide[] = ["left", "right", "left"];
     const lines: MissionBeat[] = this.mission.voices.slice(0, 3).map((voice, i) => ({
       speaker: voice.name as MissionSpeaker,
@@ -570,7 +572,7 @@ export class Game {
     this.busy = false;
     this.loseKind = "wipe";
     this.pendingItem = null;
-    this.m1IntroPlayed = false;
+    this.introPlayed.delete(this.missionIndex);
     this.m1MidBeatPlayed = false;
     this.vnOpen = false;
     this.vnDone = null;
@@ -608,8 +610,8 @@ export class Game {
     this.title.hidden = true;
     this.phase = "select";
     audio.setBgm("battle");
-    this.renderer.centerOn(this.units, this.map);
-    this.busy = this.missionIndex === 0 && !this.m1IntroPlayed;
+    this.renderer.fitToMap(this.map);
+    this.busy = !this.introPlayed.has(this.missionIndex);
     this.syncUi();
     this.autosave();
     if (this.busy) await this.playMissionIntro();

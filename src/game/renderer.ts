@@ -99,6 +99,292 @@ function hash01(n: number): number {
   return s - Math.floor(s);
 }
 
+function wrapUnit(n: number, m: number): number {
+  if (!(m > 0)) return 0;
+  const r = n % m;
+  return r < 0 ? r + m : r;
+}
+
+/** Wide skyline strip. About 4× a desktop canvas; drawn 1:1 and wrapped. */
+const STRIP_W = 4096;
+
+/**
+ * Optional painted skyline per theme. Empty so the procedural strip is used
+ * and no image request is made.
+ */
+const SKYLINE_ART: Partial<Record<MapTheme, string>> = {};
+
+interface SkylineLook {
+  sky: [string, string, string];
+  glow: [string, string, string];
+  body: string;
+  win: string;
+  winAlt?: string;
+  water0: string;
+  water1: string;
+  fog: string;
+  seed: number;
+  gap0: number;
+  gap1: number;
+  bw0: number;
+  bw1: number;
+  /** Min height and extra height, as fractions of the strip. */
+  bh0: number;
+  bh1: number;
+  /** hash01 above this draws a few windows. 1 = none. */
+  winAt: number;
+  craneAt: number;
+  gantryAt: number;
+  step: boolean;
+  sign: boolean;
+  tower: boolean;
+}
+
+const SKYLINE_LOOK: Record<MapTheme, SkylineLook> = {
+  roof: {
+    sky: ["#2a1c12", "#1a2830", "#10161c"],
+    glow: ["rgba(42, 28, 18, 0)", "rgba(200, 130, 55, 0.10)", "rgba(40, 110, 120, 0.18)"],
+    body: "rgba(7, 12, 18, 0.82)",
+    win: "rgba(255, 196, 120, 0.72)",
+    winAlt: "rgba(120, 220, 210, 0.66)",
+    water0: "rgba(8, 22, 28, 0.30)",
+    water1: "rgba(2, 3, 6, 0.97)",
+    fog: "rgba(150, 180, 185, 0.07)",
+    seed: 101,
+    gap0: 6,
+    gap1: 12,
+    bw0: 28,
+    bw1: 40,
+    bh0: 0.22,
+    bh1: 0.3,
+    winAt: 0.84,
+    craneAt: 0.78,
+    gantryAt: 1,
+    step: false,
+    sign: false,
+    tower: false,
+  },
+  alley: {
+    sky: ["#1c100a", "#140c0a", "#0c0908"],
+    glow: ["rgba(40, 18, 8, 0)", "rgba(220, 110, 30, 0.09)", "rgba(150, 60, 16, 0.16)"],
+    body: "rgba(14, 7, 4, 0.84)",
+    win: "rgba(255, 176, 70, 0.78)",
+    water0: "rgba(20, 10, 6, 0.30)",
+    water1: "rgba(3, 2, 2, 0.97)",
+    fog: "rgba(190, 140, 80, 0.06)",
+    seed: 211,
+    gap0: 3,
+    gap1: 6,
+    bw0: 16,
+    bw1: 18,
+    bh0: 0.58,
+    bh1: 0.34,
+    winAt: 0.88,
+    craneAt: 1,
+    gantryAt: 1,
+    step: true,
+    sign: false,
+    tower: false,
+  },
+  warehouse: {
+    sky: ["#101820", "#141c26", "#0c1218"],
+    glow: ["rgba(16, 28, 40, 0)", "rgba(130, 160, 180, 0.08)", "rgba(60, 90, 112, 0.15)"],
+    body: "rgba(7, 12, 18, 0.84)",
+    win: "rgba(186, 220, 235, 0.62)",
+    water0: "rgba(10, 16, 24, 0.32)",
+    water1: "rgba(2, 3, 6, 0.97)",
+    fog: "rgba(150, 175, 190, 0.065)",
+    seed: 307,
+    gap0: 16,
+    gap1: 22,
+    bw0: 70,
+    bw1: 80,
+    bh0: 0.16,
+    bh1: 0.18,
+    winAt: 0.9,
+    craneAt: 0.62,
+    gantryAt: 0.38,
+    step: false,
+    sign: false,
+    tower: false,
+  },
+  street: {
+    sky: ["#1a1018", "#140e16", "#0e0a12"],
+    glow: ["rgba(36, 10, 28, 0)", "rgba(190, 40, 130, 0.08)", "rgba(100, 30, 80, 0.14)"],
+    body: "rgba(12, 6, 14, 0.82)",
+    win: "rgba(255, 90, 180, 0.75)",
+    water0: "rgba(18, 8, 16, 0.30)",
+    water1: "rgba(3, 2, 4, 0.97)",
+    fog: "rgba(190, 140, 175, 0.06)",
+    seed: 409,
+    gap0: 8,
+    gap1: 14,
+    bw0: 32,
+    bw1: 40,
+    bh0: 0.32,
+    bh1: 0.34,
+    winAt: 0.74,
+    craneAt: 1,
+    gantryAt: 1,
+    step: true,
+    sign: true,
+    tower: false,
+  },
+  plaza: {
+    sky: ["#10181c", "#14161e", "#10141a"],
+    glow: ["rgba(12, 32, 36, 0)", "rgba(50, 150, 155, 0.08)", "rgba(90, 60, 150, 0.13)"],
+    body: "rgba(8, 10, 18, 0.8)",
+    win: "rgba(150, 235, 220, 0.68)",
+    winAlt: "rgba(190, 150, 235, 0.64)",
+    water0: "rgba(8, 16, 24, 0.30)",
+    water1: "rgba(2, 3, 6, 0.97)",
+    fog: "rgba(150, 170, 190, 0.06)",
+    seed: 521,
+    gap0: 28,
+    gap1: 48,
+    bw0: 100,
+    bw1: 90,
+    bh0: 0.12,
+    bh1: 0.16,
+    winAt: 0.9,
+    craneAt: 1,
+    gantryAt: 1,
+    step: false,
+    sign: false,
+    tower: true,
+  },
+};
+
+function fillWrap(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  span: number,
+): void {
+  if (w <= 0 || h <= 0 || span <= 0) return;
+  const x0 = wrapUnit(x, span);
+  ctx.fillRect(x0, y, w, h);
+  if (x0 + w > span) ctx.fillRect(x0 - span, y, w, h);
+}
+
+function paintCrane(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  roofY: number,
+  mast: number,
+  jib: number,
+  span: number,
+): void {
+  const top = roofY - mast;
+  fillWrap(ctx, x, top, 2.5, mast, span);
+  fillWrap(ctx, x - jib * 0.22, top, jib, 2, span);
+  fillWrap(ctx, x + jib * 0.42, top, 1.6, mast * 0.42, span);
+}
+
+function paintGantry(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  roofY: number,
+  bw: number,
+  mast: number,
+  span: number,
+): void {
+  const top = roofY - mast;
+  const left = x + bw * 0.16;
+  const right = x + bw * 0.74;
+  fillWrap(ctx, left, top, 3, mast, span);
+  fillWrap(ctx, right, top, 3, mast, span);
+  fillWrap(ctx, left, top, Math.max(3, right - left), 2.5, span);
+}
+
+function paintBlocks(
+  ctx: CanvasRenderingContext2D,
+  look: SkylineLook,
+  w: number,
+  h: number,
+  seed: number,
+  heightScale: number,
+  far: boolean,
+): void {
+  ctx.fillStyle = look.body;
+  let x = 0;
+  let i = 0;
+  const gapMul = far ? 1.7 : 1;
+  while (x < w && i < 700) {
+    const u = hash01(seed + i * 19.17);
+    const v = hash01(seed + i * 7.31 + 2);
+    const gap = (look.gap0 + u * look.gap1) * gapMul;
+    const bw = (look.bw0 + v * look.bw1) * (far ? 1.15 : 1);
+    const bh = h * (look.bh0 + hash01(seed + i * 3.1) * look.bh1) * heightScale;
+    const by = h - bh;
+    fillWrap(ctx, x, by, bw, bh, w);
+    if (!far && look.step && hash01(seed + i * 11.2) > 0.42) {
+      const inset = bw * 0.18;
+      const stepH = Math.max(3, bh * 0.14);
+      fillWrap(ctx, x + inset, by - stepH, Math.max(2, bw - inset * 2), stepH + 1, w);
+    }
+    if (!far && look.craneAt < 1 && hash01(seed + i * 13.7) > look.craneAt) {
+      paintCrane(ctx, x + bw * 0.62, by, h * (0.16 + u * 0.18), bw * 1.25, w);
+    }
+    if (!far && look.gantryAt < 1 && hash01(seed + i * 15.1) > look.gantryAt) {
+      paintGantry(ctx, x, by, bw, h * (0.2 + v * 0.18), w);
+    }
+    if (!far && look.sign && hash01(seed + i * 17.7) > 0.86) {
+      ctx.fillStyle = look.win;
+      fillWrap(ctx, x + bw * 0.12, by + bh * 0.14, bw * 0.46, Math.max(2, bh * 0.04), w);
+      ctx.fillStyle = look.body;
+    }
+    if (!far && hash01(seed + i * 23.9) > look.winAt) {
+      const alt = !!look.winAlt && hash01(seed + i * 4.4) > 0.8;
+      ctx.fillStyle = alt && look.winAlt ? look.winAlt : look.win;
+      const n = 1 + Math.floor(hash01(seed + i * 8.2) * 3);
+      for (let k = 0; k < n; k++) {
+        if (hash01(seed + i * 50 + k * 3) < 0.28) continue;
+        const wx = x + bw * (0.2 + hash01(seed + i * 9 + k) * 0.55);
+        const wy = by + bh * (0.16 + hash01(seed + i * 6 + k) * 0.55);
+        fillWrap(ctx, wx, wy, Math.max(2, bw * 0.05), Math.max(3, bh * 0.04), w);
+      }
+      ctx.fillStyle = look.body;
+    }
+    x += bw + gap;
+    i++;
+  }
+}
+
+function paintSkylineStrip(ctx: CanvasRenderingContext2D, theme: MapTheme, w: number, h: number): void {
+  const look = SKYLINE_LOOK[theme];
+  const glow = ctx.createLinearGradient(0, 0, 0, h);
+  glow.addColorStop(0, look.glow[0]);
+  glow.addColorStop(0.58, look.glow[1]);
+  glow.addColorStop(1, look.glow[2]);
+  ctx.fillStyle = glow;
+  ctx.fillRect(0, 0, w, h);
+  ctx.save();
+  ctx.globalAlpha = 0.45;
+  paintBlocks(ctx, look, w, h, look.seed + 80, 0.62, true);
+  ctx.restore();
+  paintBlocks(ctx, look, w, h, look.seed, 1, false);
+  if (!look.tower) return;
+  ctx.fillStyle = look.body;
+  const tx = w * 0.64;
+  const tw = 36;
+  const th = h * 0.8;
+  fillWrap(ctx, tx, h - th, tw, th, w);
+  fillWrap(ctx, tx + tw * 0.4, h - th - h * 0.07, 5, h * 0.09, w);
+  ctx.fillStyle = look.win;
+  for (let k = 0; k < 5; k++) {
+    if (hash01(look.seed + 90 + k) < 0.28) continue;
+    fillWrap(ctx, tx + 12, h - th * (0.18 + k * 0.14), 4, 3, w);
+  }
+}
+
+function bitmapSize(src: HTMLCanvasElement | HTMLImageElement): { w: number; h: number } {
+  if (src instanceof HTMLCanvasElement) return { w: src.width, h: src.height };
+  return { w: src.naturalWidth, h: src.naturalHeight };
+}
+
 /** Elite billboards (drawUnit / drawMapDoll) are drawn this much taller. */
 const ELITE_SCALE = 1.12;
 /** Sprite feet sit this many zoom-pixels below the projected ground point. */
@@ -129,6 +415,15 @@ export class Renderer {
   private mapW = 10;
   private mapH = 12;
   private readonly kingsWharf = new Image();
+  /** M1 roof plate. `?bgslot` turns this off so the skyline slot can be previewed. */
+  legacyPlate = true;
+  private skylineCache = new Map<MapTheme, HTMLCanvasElement>();
+  private skylineArt = new Map<MapTheme, HTMLImageElement>();
+  private skylineCacheH = -1;
+  private skylineSlide = 0;
+  private skylineSlideAt = 0;
+  private skylineSlideSpan = 0;
+  private skylineSlideReady = false;
   private readonly mapDolls: Record<"mara" | "dana" | "priya", HTMLImageElement> = {
     mara: new Image(),
     dana: new Image(),
@@ -184,6 +479,7 @@ export class Renderer {
     this.ctx = ctx;
     this.kingsWharf.decoding = "async";
     this.kingsWharf.src = "./sprites/scene-kings-wharf.png";
+    if (location.search.includes("bgslot")) this.legacyPlate = false;
     for (const [archetype, image] of Object.entries(this.mapDolls)) {
       image.decoding = "async";
       image.src = `./sprites/${archetype}.png`;
@@ -405,6 +701,52 @@ export class Renderer {
     this.cam.zoom = 0.7;
   }
 
+  /**
+   * Frame the whole board at the current yaw and pitch.
+   * Bounds are every tile's top corners (isoOf) plus the prism base (topMetrics.drop),
+   * so the lowest edge includes the slab under the front faces.
+   */
+  fitToMap(map: GameMap): void {
+    this.syncMap(map);
+    if (!(this.cam.zoom > 1e-4)) this.cam.zoom = 1;
+    const z0 = this.cam.zoom;
+    const corner: Array<[number, number]> = [
+      [-0.5, -0.5],
+      [0.5, -0.5],
+      [0.5, 0.5],
+      [-0.5, 0.5],
+    ];
+    let minX = Infinity;
+    let minY = Infinity;
+    let maxX = -Infinity;
+    let maxY = -Infinity;
+    let any = false;
+    for (let y = 0; y < map.h; y++) {
+      for (let x = 0; x < map.w; x++) {
+        const t = map.tiles[y][x];
+        const drop = this.topMetrics(t.x, t.y, t.h).drop / z0;
+        for (const [dx, dy] of corner) {
+          const p = this.isoOf(t.x + dx, t.y + dy, t.h);
+          any = true;
+          if (p.x < minX) minX = p.x;
+          if (p.y < minY) minY = p.y;
+          if (p.x > maxX) maxX = p.x;
+          if (p.y > maxY) maxY = p.y;
+          const by = p.y + drop;
+          if (by > maxY) maxY = by;
+        }
+      }
+    }
+    if (!any) return;
+    const worldW = maxX - minX;
+    const worldH = maxY - minY;
+    if (!(worldW > 0) || !(worldH > 0)) return;
+    const fit = Math.min((this.w * 0.92) / worldW, (this.h * 0.85) / worldH);
+    this.cam.zoom = Math.min(1.8, Math.max(0.55, fit));
+    this.cam.x = (minX + maxX) / 2;
+    this.cam.y = (minY + maxY) / 2;
+  }
+
   draw(
     map: GameMap,
     units: Unit[],
@@ -453,8 +795,7 @@ export class Renderer {
 
   private drawBackdrop(theme: MapTheme): void {
     const ctx = this.ctx;
-    const g = ctx.createLinearGradient(0, 0, 0, this.h);
-    if (theme === "roof" && this.kingsWharf.complete && this.kingsWharf.naturalWidth > 0) {
+    if (theme === "roof" && this.legacyPlate && this.kingsWharf.complete && this.kingsWharf.naturalWidth > 0) {
       const scale = Math.max(this.w / this.kingsWharf.naturalWidth, this.h / this.kingsWharf.naturalHeight);
       const dw = this.kingsWharf.naturalWidth * scale;
       const dh = this.kingsWharf.naturalHeight * scale;
@@ -472,18 +813,130 @@ export class Renderer {
       ctx.fillStyle = fade;
       ctx.fillRect(0, 0, this.w, this.h);
       ctx.restore();
-    } else {
-      if (theme === "alley" || theme === "warehouse" || theme === "street") {
-        g.addColorStop(0, "#0c0d12");
-        g.addColorStop(0.5, "#0a090c");
-        g.addColorStop(1, "#140c08");
-      } else {
-        g.addColorStop(0, "#0b1020");
-        g.addColorStop(0.45, "#090914");
-        g.addColorStop(1, "#120818");
+      return;
+    }
+    this.drawSkylineSlot(theme);
+  }
+
+  private drawSky(theme: MapTheme): void {
+    const look = SKYLINE_LOOK[theme];
+    const g = this.ctx.createLinearGradient(0, 0, 0, this.h);
+    g.addColorStop(0, look.sky[0]);
+    g.addColorStop(0.55, look.sky[1]);
+    g.addColorStop(1, look.sky[2]);
+    this.ctx.fillStyle = g;
+    this.ctx.fillRect(0, 0, this.w, this.h);
+  }
+
+  private skylineBitmap(theme: MapTheme): HTMLCanvasElement | HTMLImageElement {
+    const url = SKYLINE_ART[theme];
+    if (url) {
+      let img = this.skylineArt.get(theme);
+      if (!img) {
+        img = new Image();
+        img.decoding = "async";
+        img.src = url;
+        this.skylineArt.set(theme, img);
       }
-      ctx.fillStyle = g;
-      ctx.fillRect(0, 0, this.w, this.h);
+      if (img.complete && img.naturalWidth > 0) return img;
+    }
+    return this.proceduralSkyline(theme);
+  }
+
+  private proceduralSkyline(theme: MapTheme): HTMLCanvasElement {
+    const h = Math.max(48, Math.round(this.h * 0.45));
+    if (h !== this.skylineCacheH) {
+      this.skylineCache.clear();
+      this.skylineCacheH = h;
+    }
+    const cached = this.skylineCache.get(theme);
+    if (cached) return cached;
+    const canvas = document.createElement("canvas");
+    canvas.width = STRIP_W;
+    canvas.height = h;
+    const ctx = canvas.getContext("2d");
+    if (ctx) paintSkylineStrip(ctx, theme, STRIP_W, h);
+    this.skylineCache.set(theme, canvas);
+    return canvas;
+  }
+
+  /** Ease the displayed strip slide toward `target` the short way around. ~300ms. */
+  private stepSkylineSlide(target: number, width: number): void {
+    const now = performance.now();
+    if (!this.skylineSlideReady || this.skylineSlideSpan !== width) {
+      this.skylineSlide = wrapUnit(target, width);
+      this.skylineSlideReady = true;
+      this.skylineSlideSpan = width;
+      this.skylineSlideAt = now;
+      return;
+    }
+    const dt = Math.min(0.1, Math.max(0, (now - this.skylineSlideAt) / 1000));
+    this.skylineSlideAt = now;
+    let delta = wrapUnit(target - this.skylineSlide, width);
+    if (delta > width * 0.5) delta -= width;
+    const k = 1 - Math.exp(-dt / 0.1);
+    this.skylineSlide = wrapUnit(this.skylineSlide + delta * k, width);
+  }
+
+  private drawSkylineSlot(theme: MapTheme): void {
+    const ctx = this.ctx;
+    this.drawSky(theme);
+    const strip = this.skylineBitmap(theme);
+    const { w: sw, h: sh } = bitmapSize(strip);
+    const horizon = this.h * 0.58;
+    const scale = 1 + (this.cam.zoom - 1) * 0.3;
+    const drawW = sw * scale;
+    const drawH = sh * scale;
+    if (!(drawW > 1) || !(drawH > 1)) {
+      this.drawWaterFog(theme, horizon);
+      return;
+    }
+    const xOff = -this.cam.x * this.cam.zoom * 0.3;
+    const yOff = -this.cam.y * this.cam.zoom * 0.3;
+    const coverH = Math.min(drawH, this.h * 0.45);
+    const minDest = horizon - drawH;
+    const maxDest = horizon - coverH;
+    let destY = minDest + yOff;
+    if (maxDest > minDest) {
+      if (destY < minDest) destY = minDest;
+      else if (destY > maxDest) destY = maxDest;
+    } else {
+      destY = minDest;
+    }
+    this.stepSkylineSlide((this.yaw / (Math.PI * 2)) * sw, sw);
+    let destX = wrapUnit(xOff + this.skylineSlide * scale, drawW);
+    if (destX > 0) destX -= drawW;
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(0, 0, this.w, horizon);
+    ctx.clip();
+    for (let x = destX; x < this.w; x += drawW) ctx.drawImage(strip, x, destY, drawW, drawH);
+    ctx.restore();
+    this.drawWaterFog(theme, horizon);
+  }
+
+  private drawWaterFog(theme: MapTheme, horizon: number): void {
+    const ctx = this.ctx;
+    const look = SKYLINE_LOOK[theme];
+    const g = ctx.createLinearGradient(0, horizon, 0, this.h);
+    g.addColorStop(0, look.water0);
+    g.addColorStop(0.42, "rgba(4, 6, 10, 0.86)");
+    g.addColorStop(1, look.water1);
+    ctx.fillStyle = g;
+    ctx.fillRect(0, horizon, this.w, Math.max(0, this.h - horizon));
+    const span = Math.max(1, this.h - horizon);
+    for (let i = 0; i < 3; i++) {
+      const bob = Math.sin(this.time * 0.00035 + i * 1.7) * 8;
+      const y = horizon + span * (0.18 + i * 0.22) + bob;
+      const bandW = this.w * (0.62 + i * 0.14);
+      const travel = this.w + bandW;
+      const x = wrapUnit(this.time * (0.012 + i * 0.005) + i * this.w * 0.37, travel) - bandW;
+      const fog = ctx.createLinearGradient(0, y - 18, 0, y + 18);
+      fog.addColorStop(0, "rgba(0,0,0,0)");
+      fog.addColorStop(0.5, look.fog);
+      fog.addColorStop(1, "rgba(0,0,0,0)");
+      ctx.fillStyle = fog;
+      ctx.fillRect(x, y - 18, bandW, 36);
     }
   }
 
