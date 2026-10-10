@@ -163,9 +163,15 @@ body {
 
 #forecast {
   position: absolute;
-  left: 12px;
-  right: 12px;
-  bottom: calc(var(--dock-h) + env(safe-area-inset-bottom) + 52px);
+  /* Centre column between the corner stacks (背包/旋轉 | 暫停/結束回合), just above the log line,
+     so it never covers those buttons or the hint and keeps clear of the board centre. */
+  left: 88px;
+  right: 88px;
+  max-width: 560px;
+  margin: 0 auto;
+  bottom: calc(var(--dock-h) + env(safe-area-inset-bottom) + 32px);
+  max-height: calc(100dvh - var(--dock-h) - env(safe-area-inset-bottom) - 32px - var(--hud-h) - 12px);
+  overflow: auto;
   z-index: 6;
   background: var(--panel);
   border: 1px solid var(--line);
@@ -178,6 +184,13 @@ body {
 
 #forecast[hidden] {
   display: none;
+}
+
+/* Narrow screens: the centre column reaches the gesture hint's row, so hide that static hint while a preview is open. */
+@media (max-width: 600px) {
+  #forecast:not([hidden]) ~ #cam-hint {
+    visibility: hidden;
+  }
 }
 
 #forecast b {
