@@ -73,6 +73,8 @@ const VN_SPRITES: Record<MissionSpeaker, string> = {
   Priya: "./sprites/vn-priya.png",
 };
 
+const VN_PORTRAIT_WAIT_MS = 1500;
+
 const MOVE_STEP_MS = 250;
 const ACTION_BEAT_MS = 520;
 const ENEMY_GAP_MS = 460;
@@ -184,6 +186,11 @@ export class Game {
   private pauseEl = el<HTMLElement>("pause");
   private vn = el<HTMLElement>("vn");
   private vnBust = el<HTMLImageElement>("vn-bust");
+  private readonly vnPortraits: Record<MissionSpeaker, HTMLImageElement> = {
+    Mara: new Image(),
+    Dana: new Image(),
+    Priya: new Image(),
+  };
   private vnBox = el<HTMLElement>("vn-box");
   private vnName = el<HTMLElement>("vn-name");
   private vnText = el<HTMLElement>("vn-text");
@@ -196,6 +203,7 @@ export class Game {
   constructor(canvas: HTMLCanvasElement) {
     this.renderer = new Renderer(canvas);
     precacheRigs();
+    this.preloadVnPortraits();
     this.input = new PointerInput(canvas, this.renderer);
     this.input.onTap = (p) => this.onTap(p);
     this.map = new GameMap(this.mission.map);
@@ -461,20 +469,49 @@ export class Game {
     this.hudSub.textContent = m.hudSub;
   }
 
+  /** Keep portrait Image objects alive so a cold load can finish before the first beat. */
+  private preloadVnPortraits(): void {
+    for (const speaker of Object.keys(VN_SPRITES) as MissionSpeaker[]) {
+      const image = this.vnPortraits[speaker];
+      image.decoding = "async";
+      image.src = VN_SPRITES[speaker];
+    }
+  }
+
+  /** Resolve when the portrait has loaded and decoded, or as soon as it fails. Never hangs. */
+  private portraitSettled(image: HTMLImageElement): Promise<void> {
+    if (image.complete && image.naturalWidth === 0) return Promise.resolve();
+    return image.decode().then(
+      () => undefined,
+      () => undefined,
+    );
+  }
+
+  private waitForSpeakerPortrait(speaker: MissionSpeaker): Promise<void> {
+    const ready = Promise.all([
+      this.portraitSettled(this.vnPortraits[speaker]),
+      this.portraitSettled(this.vnBust),
+    ]).then(() => undefined);
+    return Promise.race([ready, delay(VN_PORTRAIT_WAIT_MS)]);
+  }
+
   /** Display one deliberate, tap-to-advance story beat over the live board. */
   showVn({ speaker, side, text }: MissionBeat): Promise<void> {
     this.vnOpen = true;
     this.vn.classList.toggle("right", side === "right");
     this.vn.classList.toggle("left", side !== "right");
+    this.vnBust.decoding = "async";
     this.vnBust.src = VN_SPRITES[speaker];
     this.vnBust.alt = speaker;
     this.vnName.textContent = speaker;
     this.vnText.textContent = text;
-    this.vn.hidden = false;
-    this.syncUi();
-    return new Promise<void>((resolve) => {
-      this.vnDone = resolve;
-      this.vnBox.focus({ preventScroll: true });
+    return this.waitForSpeakerPortrait(speaker).then(() => {
+      this.vn.hidden = false;
+      this.syncUi();
+      return new Promise<void>((resolve) => {
+        this.vnDone = resolve;
+        this.vnBox.focus({ preventScroll: true });
+      });
     });
   }
 
