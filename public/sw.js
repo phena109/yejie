@@ -1,4 +1,4 @@
-const CACHE = "yejie-v25";
+const CACHE = "yejie-v26";
 
 const PRECACHE = [
   "./",
@@ -6,9 +6,9 @@ const PRECACHE = [
   "./manifest.webmanifest",
   "./icon.svg",
   "./version.json",
-  "./sprites/vn-mara.png",
-  "./sprites/vn-dana.png",
-  "./sprites/vn-priya.png",
+  "./sprites/vn-mara.webp",
+  "./sprites/vn-dana.webp",
+  "./sprites/vn-priya.webp",
 ];
 
 self.addEventListener("install", (event) => {

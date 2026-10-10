@@ -68,9 +68,9 @@ function el<T extends HTMLElement>(id: string): T {
 type VnSide = "left" | "right";
 
 const VN_SPRITES: Record<MissionSpeaker, string> = {
-  Mara: "./sprites/vn-mara.png",
-  Dana: "./sprites/vn-dana.png",
-  Priya: "./sprites/vn-priya.png",
+  Mara: "./sprites/vn-mara.webp",
+  Dana: "./sprites/vn-dana.webp",
+  Priya: "./sprites/vn-priya.webp",
 };
 
 const VN_PORTRAIT_WAIT_MS = 1500;
@@ -202,9 +202,9 @@ export class Game {
   private pendingJump: number | null = null;
 
   constructor(canvas: HTMLCanvasElement) {
+    this.preloadVnPortraits();
     this.renderer = new Renderer(canvas);
     precacheRigs();
-    this.preloadVnPortraits();
     this.input = new PointerInput(canvas, this.renderer);
     this.input.onTap = (p) => this.onTap(p);
     this.map = new GameMap(this.mission.map);
@@ -495,6 +495,7 @@ export class Game {
     for (const speaker of Object.keys(VN_SPRITES) as MissionSpeaker[]) {
       const image = this.vnPortraits[speaker];
       image.decoding = "async";
+      if ("fetchPriority" in image) image.fetchPriority = "high";
       image.src = VN_SPRITES[speaker];
     }
   }
@@ -522,6 +523,7 @@ export class Game {
     this.vn.classList.toggle("right", side === "right");
     this.vn.classList.toggle("left", side !== "right");
     this.vnBust.decoding = "async";
+    if ("fetchPriority" in this.vnBust) this.vnBust.fetchPriority = "high";
     this.vnBust.src = VN_SPRITES[speaker];
     this.vnBust.alt = speaker;
     this.vnName.textContent = speaker;
