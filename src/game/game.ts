@@ -189,8 +189,6 @@ export class Game {
   private vnText = el<HTMLElement>("vn-text");
   private titleBuild = el<HTMLElement>("title-build");
   private camHint = el<HTMLElement>("cam-hint");
-  private yawSlider = el<HTMLInputElement>("yaw-slider");
-  private pitchSlider = el<HTMLInputElement>("pitch-slider");
   private pendingSlot: number | null = null;
   private pendingQuit = false;
   private pendingJump: number | null = null;
@@ -249,12 +247,6 @@ export class Game {
     });
     this.bindSeg("seg-power", (v) => {
       this.power = v;
-    });
-    this.yawSlider.addEventListener("input", () => {
-      this.renderer.yaw = Number(this.yawSlider.value) / 100;
-    });
-    this.pitchSlider.addEventListener("input", () => {
-      this.renderer.setPitch(Number(this.pitchSlider.value));
     });
     this.modalBody.addEventListener("click", (e) => this.onModalClick(e));
     this.titleBuild.textContent = `版本 ${VERSION}　${BUILD_STAMP}`;
@@ -594,7 +586,6 @@ export class Game {
   private rotateMap(): void {
     if (this.phase === "briefing" || this.phase === "title") return;
     this.renderer.rotate(this.map);
-    this.yawSlider.value = String(Math.round(((this.renderer.yaw % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2) * 100));
   }
 
   private clearSel(): void {
@@ -1790,8 +1781,6 @@ export class Game {
     this.renderer.cam = { ...s.cam };
     this.renderer.yaw = s.yaw;
     this.renderer.setPitch(s.pitch ?? PITCH_DEFAULT);
-    this.yawSlider.value = String(Math.round((((s.yaw % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2)) * 100));
-    this.pitchSlider.value = String(Math.round(this.renderer.pitch));
     this.clearSel();
     this.inspect = null;
     this.busy = false;
@@ -1976,10 +1965,6 @@ export class Game {
     this.btnPause.hidden = hidePause;
     this.btnBag.hidden = hidePause;
     this.camHint.hidden = hideChrome;
-    const fine = window.matchMedia("(pointer: fine)").matches;
-    this.yawSlider.hidden = hideChrome || !fine;
-    this.pitchSlider.hidden = hideChrome || !fine;
-    this.pitchSlider.value = String(Math.round(this.renderer.pitch));
     this.refreshContinue();
   }
 }
