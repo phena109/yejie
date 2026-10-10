@@ -1092,12 +1092,17 @@ export class Renderer {
       const bandW = this.w * (0.62 + i * 0.14);
       const travel = this.w + bandW;
       const x = wrapUnit(this.time * (0.012 + i * 0.005) + i * this.w * 0.37, travel) - bandW;
-      const fog = ctx.createLinearGradient(0, y - 18, 0, y + 18);
-      fog.addColorStop(0, "rgba(0,0,0,0)");
-      fog.addColorStop(0.5, look.fog);
+      // Elliptical soft band: fades on every side, so no hard-ended horizontal streak.
+      const fog = ctx.createRadialGradient(0, 0, 0, 0, 0, 1);
+      fog.addColorStop(0, look.fog);
+      fog.addColorStop(0.55, look.fog.replace(/[\d.]+\)$/, (a) => `${parseFloat(a) * 0.5})`));
       fog.addColorStop(1, "rgba(0,0,0,0)");
+      ctx.save();
+      ctx.translate(x + bandW / 2, y);
+      ctx.scale(bandW / 2, 42);
       ctx.fillStyle = fog;
-      ctx.fillRect(x, y - 18, bandW, 36);
+      ctx.fillRect(-1, -1, 2, 2);
+      ctx.restore();
     }
   }
 
