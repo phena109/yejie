@@ -485,14 +485,6 @@ export class Renderer {
       ctx.fillStyle = g;
       ctx.fillRect(0, 0, this.w, this.h);
     }
-    ctx.save();
-    ctx.globalAlpha = theme === "roof" ? 0.24 : 0.16;
-    for (let i = 0; i < 8; i++) {
-      const x = (i * 73 + (this.time * 0.004) % 73) % this.w;
-      ctx.fillStyle = theme === "alley" ? (i % 2 ? "#ffb040" : "#c45a2a") : i % 2 ? "#ffb040" : "#ff6b35";
-      ctx.fillRect(x, 8 + (i % 3) * 10, 18, 4);
-    }
-    ctx.restore();
   }
 
   private themeGroup(theme: MapTheme): "alley" | "roof" {

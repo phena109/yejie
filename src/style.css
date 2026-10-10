@@ -444,7 +444,10 @@ body {
 #confirm-yes,
 #modal-card > button,
 #title-card > button,
-#pause-card > button {
+#pause-card > button,
+#confirm-card > button,
+#briefing-card > button,
+#result-card > button {
   width: 100%;
   min-height: 48px;
   margin-top: 8px;
