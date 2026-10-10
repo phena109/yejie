@@ -610,7 +610,9 @@ export class Game {
     this.title.hidden = true;
     this.phase = "select";
     audio.setBgm("battle");
-    this.renderer.fitToMap(this.map);
+    // M1 stays at 0.7 until the #9 background art lands.
+    if (this.missionIndex === 0) this.renderer.centerOn(this.units, this.map);
+    else this.renderer.fitToMap(this.map);
     this.busy = !this.introPlayed.has(this.missionIndex);
     this.syncUi();
     this.autosave();
