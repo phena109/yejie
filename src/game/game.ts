@@ -1112,6 +1112,7 @@ export class Game {
       }
       if (target.hp <= 0) {
         target.dead = true;
+        this.spawnFloat(target, "倒下", "#ff8aa0");
         this.log = `${target.name} 倒下。`;
         this.tryEnemyDrop(target);
       }
@@ -1226,6 +1227,7 @@ export class Game {
           if (f.skip) plan.target.skipNext = true;
           if (plan.target.hp <= 0) {
             plan.target.dead = true;
+            this.spawnFloat(plan.target, "倒下", "#ff8aa0");
             this.log = `${plan.target.name} 倒下。`;
             this.tryEnemyDrop(plan.target);
           }

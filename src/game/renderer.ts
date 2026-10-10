@@ -912,8 +912,13 @@ export class Renderer {
     this.drawBackdrop(map.theme);
 
     const byTile = new Map<string, Unit[]>();
+    const downedAt = new Map<string, Unit>();
     for (const u of units) {
-      if (u.dead) continue;
+      if (u.dead) {
+        // Fallen squad members leave a marker so they never just vanish.
+        if (u.team === "player" && !u.npc) downedAt.set(key(u.x, u.y), u);
+        continue;
+      }
       const k = key(u.x, u.y);
       const list = byTile.get(k);
       if (list) list.push(u);
@@ -936,6 +941,9 @@ export class Renderer {
       const o = objAt.get(key(c.x, c.y));
       if (o) this.drawBoardObj(o, map);
       const stack = byTile.get(key(c.x, c.y));
+      const downed = downedAt.get(key(c.x, c.y));
+      // Ring and cross only: name plates are laid out in the overlay pass and a tag here would collide.
+      if (downed) this.drawDownedMarker(downed, map, false);
       if (!stack) continue;
       for (const u of stack) {
         this.drawUnit(u, map, overlays);
@@ -1718,6 +1726,49 @@ export class Renderer {
   }
 
   /** Feet anchor shared with hitUnit so the body box stays on the drawn sprite. */
+  /** Grey dashed ring and red cross on the tile where a squad member was knocked out (tag optional, unused). */
+  private drawDownedMarker(u: Unit, map: GameMap, withTag: boolean): void {
+    const ctx = this.ctx;
+    const { x, feetY, z, scale } = this.unitPose(u, map);
+    const cy = feetY + RING_DROP * z;
+    const rx = RING_RX * scale;
+    const ry = RING_RY * scale;
+    ctx.save();
+    ctx.globalAlpha = 0.85;
+    ctx.fillStyle = "rgba(0,0,0,0.45)";
+    ctx.beginPath();
+    ctx.ellipse(x, cy, rx, ry, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.setLineDash([3, 2]);
+    ctx.strokeStyle = "rgba(190,196,210,0.8)";
+    ctx.lineWidth = 1.4;
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.strokeStyle = "rgba(255,92,120,0.9)";
+    ctx.lineWidth = 1.8;
+    ctx.beginPath();
+    ctx.moveTo(x - rx * 0.4, cy - ry * 0.4);
+    ctx.lineTo(x + rx * 0.4, cy + ry * 0.4);
+    ctx.moveTo(x + rx * 0.4, cy - ry * 0.4);
+    ctx.lineTo(x - rx * 0.4, cy + ry * 0.4);
+    ctx.stroke();
+    if (!withTag) {
+      ctx.restore();
+      return;
+    }
+    ctx.font = `600 ${Math.max(9, Math.round(10 * scale))}px system-ui, sans-serif`;
+    ctx.textAlign = "center";
+    ctx.textBaseline = "top";
+    const text = `${u.name} 倒下`;
+    const tw = ctx.measureText(text).width;
+    const ty = cy + ry + 2;
+    ctx.fillStyle = "rgba(10,10,16,0.75)";
+    ctx.fillRect(x - tw / 2 - 4, ty - 1, tw + 8, Math.max(9, Math.round(10 * scale)) + 4);
+    ctx.fillStyle = "rgba(220,224,232,0.9)";
+    ctx.fillText(text, x, ty + 1);
+    ctx.restore();
+  }
+
   private unitPose(u: Unit, map: GameMap): {
     x: number;
     feetY: number;
