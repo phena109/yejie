@@ -9,6 +9,7 @@
   --muted: #8b93a7;
   --line: rgba(62, 240, 208, 0.28);
   --dock-h: 72px;
+  --hud-h: 56px;
 }
 
 * {
@@ -44,7 +45,9 @@ body {
 
 #hud-top {
   position: relative;
-  z-index: 5;
+  z-index: 7;
+  flex-shrink: 0;
+  height: var(--hud-h);
   display: flex;
   justify-content: space-between;
   align-items: flex-end;
@@ -80,7 +83,7 @@ body {
   z-index: 6;
   left: 12px;
   right: 12px;
-  top: calc(env(safe-area-inset-top) + 48px);
+  top: calc(env(safe-area-inset-top) + var(--hud-h) + 6px);
   display: flex;
   gap: 10px;
   align-items: center;
