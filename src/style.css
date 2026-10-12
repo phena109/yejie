@@ -494,6 +494,13 @@ button.ghost,
   display: none;
 }
 
+/* 下一場 is before 再戰. When it is shown, 再戰 matches the ghost buttons. Defeat keeps #btn-next hidden, so 再戰 stays neon. */
+#btn-next:not([hidden]) ~ #btn-restart {
+  background: #161622 !important;
+  color: var(--text) !important;
+  border: 1px solid #2a2a3a !important;
+}
+
 
 #result-kicker {
   color: var(--neon);

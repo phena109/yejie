@@ -1348,7 +1348,7 @@ export class Game {
     if (this.missionIndex === 0 && !this.m1DropGiven) {
       addItem(this.inventory, "bandage", 1);
       this.m1DropGiven = true;
-      body = `${m.winBody}　又找到一盒繃帶。`;
+      body = `${m.winBody}又找到一盒繃帶。`;
     }
     this.resultBody.textContent = body;
     this.btnNext.hidden = this.missionIndex >= MISSIONS.length - 1;
