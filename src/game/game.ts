@@ -78,6 +78,8 @@ const VN_PORTRAIT_WAIT_MS = 1500;
 const MOVE_STEP_MS = 250;
 const ACTION_BEAT_MS = 520;
 const ENEMY_GAP_MS = 460;
+/** A board tap during a player-action beat is kept only this long. */
+const PENDING_TAP_MS = 1500;
 
 const ROLE_LABEL: Record<Unit["role"], string> = {
   striker: "突擊",
@@ -200,6 +202,8 @@ export class Game {
   private pendingSlot: number | null = null;
   private pendingQuit = false;
   private pendingJump: number | null = null;
+  /** Latest board tap that arrived while a player action still held `busy`. */
+  private pendingTap: { p: Vec2; at: number } | null = null;
 
   constructor(canvas: HTMLCanvasElement) {
     this.preloadVnPortraits();
@@ -333,6 +337,7 @@ export class Game {
       }
       const loop = () => {
         paint();
+        this.flushPendingTap();
         requestAnimationFrame(loop);
       };
       requestAnimationFrame(loop);
@@ -541,6 +546,7 @@ export class Game {
 
   /** Display one deliberate, tap-to-advance story beat over the live board. */
   showVn({ speaker, side, text }: MissionBeat): Promise<void> {
+    this.clearPendingTap();
     this.vnOpen = true;
     this.vn.classList.toggle("right", side === "right");
     this.vn.classList.toggle("left", side !== "right");
@@ -595,6 +601,7 @@ export class Game {
     this.clearSel();
     this.inspect = null;
     this.busy = false;
+    this.clearPendingTap();
     this.loseKind = "wipe";
     this.pendingItem = null;
     this.introPlayed.delete(this.missionIndex);
@@ -642,6 +649,7 @@ export class Game {
     this.syncUi();
     this.autosave();
     if (this.busy) await this.playMissionIntro();
+    this.clearPendingTap();
     this.busy = false;
     this.syncUi();
     this.autosave();
@@ -781,7 +789,7 @@ export class Game {
     u.anim = "idle";
     u.movedThisTurn = true;
     this.tryPickup(u);
-    this.busy = false;
+    this.setIdle();
     if (u.actedThisTurn) {
       await this.finishUnit();
       return;
@@ -790,8 +798,44 @@ export class Game {
     this.autosave();
   }
 
+  private clearPendingTap(): void {
+    this.pendingTap = null;
+  }
+
+  /** True when a deferred board tap may still land on the player phase. */
+  private pendingTapReady(): boolean {
+    return this.playable() && !this.pauseOpen && !this.vnOpen && this.modalKind === "off" && this.confirmEl.hidden;
+  }
+
+  /**
+   * Release the lock after a player action.
+   * A tap kept in `pendingTap` is replayed from the render loop on the next
+   * frame, after that frame's paint, so body stamps match the settled board.
+   * A later beat that sets `busy` again (finishUnit after a move) keeps the tap.
+   */
+  private setIdle(): void {
+    this.busy = false;
+  }
+
+  /** Replay a deferred board tap once the player phase is idle and the frame has been drawn. */
+  private flushPendingTap(): void {
+    const tap = this.pendingTap;
+    if (!tap || this.busy) return;
+    if (performance.now() - tap.at >= PENDING_TAP_MS || !this.pendingTapReady()) {
+      this.pendingTap = null;
+      return;
+    }
+    this.pendingTap = null;
+    this.onTap(tap.p);
+  }
+
   private onTap(p: Vec2): void {
-    if (this.busy || this.pauseOpen) return;
+    if (this.pauseOpen) return;
+    if (this.busy) {
+      if (this.playable() && !this.vnOpen) this.pendingTap = { p: { x: p.x, y: p.y }, at: performance.now() };
+      return;
+    }
+    this.pendingTap = null;
     if (
       this.phase === "title" ||
       this.phase === "briefing" ||
@@ -1048,7 +1092,7 @@ export class Game {
     if (f.kind === "object" && f.objectId) {
       const obj = this.map.objects.find((o) => o.id === f.objectId);
       if (!obj || obj.gone) {
-        this.busy = false;
+        this.setIdle();
         this.showCommand(actor);
         return;
       }
@@ -1072,7 +1116,7 @@ export class Game {
       actor.lunge = 0;
       actor.anim = "idle";
       await this.waitMs(ACTION_BEAT_MS);
-      this.busy = false;
+      this.setIdle();
       if (this.checkEnd()) return;
       if (actor.movedThisTurn) {
         await this.finishUnit();
@@ -1123,7 +1167,7 @@ export class Game {
     actor.lunge = 0;
     actor.anim = "idle";
     await this.waitMs(ACTION_BEAT_MS);
-    this.busy = false;
+    this.setIdle();
     if (this.checkEnd()) return;
     if (actor.movedThisTurn) {
       await this.finishUnit();
@@ -1151,7 +1195,7 @@ export class Game {
       this.m1MidBeatPlayed = true;
       for (const line of this.mission.midBeats) await this.showVn(line);
     }
-    this.busy = false;
+    this.setIdle();
     this.syncUi();
     this.autosave();
     if (this.units.filter((u) => u.team === "player" && !u.dead && !u.acted && !u.npc).length === 0) {
@@ -1164,6 +1208,7 @@ export class Game {
     for (const u of this.units) if (u.team === "player" && !u.dead && !u.npc) u.acted = true;
     this.clearSel();
     this.inspect = null;
+    this.clearPendingTap();
     this.phase = "enemy";
     this.log = "敵軍行動中";
     this.syncUi();
@@ -1255,6 +1300,7 @@ export class Game {
     }
     this.turn += 1;
     this.phase = "select";
+    this.clearPendingTap();
     this.busy = false;
     this.log = "我軍階段";
     this.syncUi();
@@ -1287,6 +1333,7 @@ export class Game {
   private win(): void {
     const m = this.mission;
     this.phase = "victory";
+    this.clearPendingTap();
     this.busy = false;
     this.closePause();
     audio.setBgm(null);
@@ -1312,6 +1359,7 @@ export class Game {
   private lose(): void {
     const m = this.mission;
     this.phase = "defeat";
+    this.clearPendingTap();
     this.busy = false;
     this.closePause();
     audio.setBgm(null);
@@ -1396,7 +1444,7 @@ export class Game {
     this.log = obj.type === "van" ? "貨車門打開了。" : "開關啟動。";
     u.actedThisTurn = true;
     u.anim = "idle";
-    this.busy = false;
+    this.setIdle();
     if (u.movedThisTurn) {
       await this.finishUnit();
       return;
@@ -1475,6 +1523,7 @@ export class Game {
     }
     this.paused = true;
     this.pauseOpen = true;
+    this.clearPendingTap();
     this.pauseEl.hidden = false;
     this.syncMuteBtn();
     audio.play("pause");
@@ -1517,6 +1566,7 @@ export class Game {
     this.title.hidden = false;
     this.phase = "title";
     this.busy = false;
+    this.clearPendingTap();
     this.clearSel();
     this.inspect = null;
     audio.setBgm("title");
@@ -1576,6 +1626,7 @@ export class Game {
   }
 
   private openBag(): void {
+    this.clearPendingTap();
     if (this.pauseOpen) this.pauseEl.hidden = true;
     this.modalKind = "bag";
     this.modal.hidden = false;
@@ -1623,6 +1674,7 @@ export class Game {
   }
 
   private openSaves(kind: "save" | "load"): void {
+    this.clearPendingTap();
     if (this.pauseOpen) this.pauseEl.hidden = true;
     this.modalKind = kind;
     this.modal.hidden = false;
@@ -1695,6 +1747,7 @@ export class Game {
     this.phase = "itemAim";
     this.log = `${ITEMS[id].name}　選我軍單位`;
     this.syncUi();
+    this.clearPendingTap();
     this.modalKind = "target";
     this.modal.hidden = false;
     this.modalKicker.textContent = ITEMS[id].name;
@@ -1739,7 +1792,7 @@ export class Game {
     this.pendingItem = null;
     this.skillTiles.clear();
     await this.waitMs(220);
-    this.busy = false;
+    this.setIdle();
     if (actor.movedThisTurn) {
       await this.finishUnit();
       return;
@@ -1903,6 +1956,7 @@ export class Game {
     this.clearSel();
     this.inspect = null;
     this.busy = false;
+    this.clearPendingTap();
     this.pendingItem = null;
     this.fillBriefing();
     this.result.hidden = true;
