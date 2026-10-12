@@ -134,16 +134,13 @@ interface LabelSlot {
   plateY: number;
   plateW: number;
   plateH: number;
-  barX: number;
   barY: number;
   barW: number;
   barH: number;
   ratio: number;
-  /** Name plate with the HP bar stacked on it. Used once the spread anchor is taken. */
+  /** Plate and HP bar together. The bar is the top of this block. */
   compactW: number;
   compactH: number;
-  /** True when the HP bar stays above the head and the plate stays under the ring. */
-  spread: boolean;
   ringX: number;
   ringY: number;
   ringRx: number;
@@ -550,8 +547,12 @@ const GHOST_ALPHA = 0.45;
  */
 const ACTED_BODY_ALPHA = 0.78;
 const ACTED_BODY_FILTER = "saturate(0.55) brightness(0.8)";
-/** Gap between label blocks, and between a side slot and the feet ring. */
-const LABEL_MARGIN = 2;
+/**
+ * Clear space around a plate+HP block. Collision inflates every placed block
+ * and the candidate by this many pixels on each side, so the drawn rects stay
+ * at least twice this far apart. Stacking steps by one block plus this gap.
+ */
+const LABEL_GAP = 3;
 /** Draw a leader when a plate leaves its default anchor by more than this. */
 const LABEL_LEADER_MIN = 6;
 const MAP_ANGLES = ["front", "ne", "right", "se", "back", "sw", "left", "nw"] as const;
@@ -2347,14 +2348,12 @@ export class Renderer {
         plateY: 0,
         plateW: 0,
         plateH: 0,
-        barX: 0,
         barY: 0,
         barW: 0,
         barH: 0,
         ratio: 1,
         compactW: 0,
         compactH: 0,
-        spread: true,
         ringX: 0,
         ringY: 0,
         ringRx: 1,
@@ -2385,9 +2384,6 @@ export class Renderer {
     const ctx = this.ctx;
     const z = this.cam.zoom;
     const fontPx = Math.max(9, 10 * z);
-    ctx.font = `${fontPx}px sans-serif`;
-    ctx.textAlign = "center";
-    ctx.textBaseline = "alphabetic";
     const selId = overlays.selected && !overlays.selected.dead ? overlays.selected.id : "";
     const hovered = this.hoveredUnit(drawn, map, overlays);
     const hovId = hovered && !hovered.dead ? hovered.id : "";
@@ -2398,6 +2394,10 @@ export class Renderer {
       const pose = this.unitPose(u, map);
       const { x, feetY, scale, dh } = pose;
       const text = u.name.split(" ")[0];
+      // Same font fillText uses, set before measure so the plate width matches the glyphs.
+      ctx.font = `${fontPx}px sans-serif`;
+      ctx.textAlign = "center";
+      ctx.textBaseline = "alphabetic";
       const metrics = ctx.measureText(text);
       const padX = Math.max(3, 4 * z);
       const padY = Math.max(1, 2 * z);
@@ -2410,7 +2410,6 @@ export class Renderer {
       const plateY = baseline - ascent - padY;
       const barW = 22 * scale;
       const barH = 3.5 * scale;
-      const barX = x - barW / 2;
       const barY = feetY - dh - 4 * scale;
       const stamp = this.bodyStamps.get(u.id);
       s.id = u.id;
@@ -2426,14 +2425,12 @@ export class Renderer {
       s.plateY = plateY;
       s.plateW = plateW;
       s.plateH = plateH;
-      s.barX = barX;
       s.barY = barY;
       s.barW = barW;
       s.barH = barH;
       s.ratio = Math.max(0, u.hp / u.maxHp);
       s.compactW = Math.max(plateW, barW);
       s.compactH = barH + plateH;
-      s.spread = true;
       s.ringX = x;
       s.ringY = feetY + RING_DROP * z;
       s.ringRx = RING_RX * scale;
@@ -2477,45 +2474,111 @@ export class Renderer {
         r = { id: "", x: 0, y: 0, w: 0, h: 0 };
         this.labelRects[i] = r;
       }
+      const block = this.blockAt(s, s.dy, s.dx);
       r.id = s.id;
-      r.x = s.plateX + s.dx;
-      r.y = s.plateY + s.dy;
-      r.w = s.plateW;
-      r.h = s.plateH;
+      r.x = block.x;
+      r.y = block.y;
+      r.w = block.w;
+      r.h = block.h;
     }
   }
 
   /**
-   * Plate stays on its own ring x. Order: under the ring, above the head (above the HP bar),
-   * then further down by one label block plus the 2px margin. The HP bar stays over the head.
+   * Drawn plate+HP block. The bar sits on top of the plate; both are centred on the ring.
+   * The leader is not part of this rect.
    */
-  private placeLabel(s: LabelSlot): void {
-    const aboveDy = s.barY - LABEL_MARGIN - (s.plateY + s.plateH);
-    const step = s.compactH + LABEL_MARGIN;
-    const tryAt = (oy: number): boolean => {
-      if (this.hitsPlaced(s.plateX, s.plateY + oy, s.plateW, s.plateH)) return false;
-      this.commitLabel(s, 0, oy, true);
-      return true;
+  private blockAt(s: LabelSlot, oy: number, ox: number): ScreenRect {
+    return {
+      x: s.ringX + ox - s.compactW / 2,
+      y: s.plateY + oy - s.barH,
+      w: s.compactW,
+      h: s.compactH,
     };
-    if (tryAt(0)) return;
-    if (tryAt(aboveDy)) return;
-    const limit = Math.max(24, this.labelCount + 8);
-    for (let k = 1; k <= limit; k++) {
-      if (tryAt(k * step)) return;
-    }
-    let top = s.plateY + (limit + 1) * step;
-    for (let i = 0; i < this.placedCount; i++) {
-      const y = this.placedRects[i].y + this.placedRects[i].h + LABEL_MARGIN;
-      if (y > top) top = y;
-    }
-    this.commitLabel(s, 0, top - s.plateY, true);
   }
 
-  private commitLabel(s: LabelSlot, ox: number, oy: number, spread: boolean): void {
+  private rectOnCanvas(r: ScreenRect): boolean {
+    return r.x >= 0 && r.y >= 0 && r.x + r.w <= this.w && r.y + r.h <= this.h;
+  }
+
+  /**
+   * Plate stays on its own ring x. The block is the name plate with its HP bar directly above it.
+   * Order: under the ring, above the head, then down by one block plus 3px. When the next
+   * downward step would leave the canvas (the edge above the dock), step up above the head.
+   */
+  private placeLabel(s: LabelSlot): void {
+    const gap = LABEL_GAP;
+    const blockH = s.compactH;
+    const step = blockH + gap;
+    const aboveDy = s.barY - gap - (s.plateY + s.plateH);
+    const limit = Math.max(24, this.labelCount + 8);
+
+    const accept = (oy: number): boolean => {
+      const rect = this.blockAt(s, oy, 0);
+      if (!this.rectOnCanvas(rect)) return false;
+      if (this.hitsPlaced(rect)) return false;
+      this.commitLabel(s, 0, oy);
+      return true;
+    };
+
+    if (accept(0)) return;
+    if (accept(aboveDy)) return;
+
+    let downLeaves = false;
+    for (let k = 1; k <= limit; k++) {
+      const oy = k * step;
+      if (this.blockAt(s, oy, 0).y + blockH > this.h) {
+        downLeaves = true;
+        break;
+      }
+      if (accept(oy)) return;
+    }
+
+    if (downLeaves) {
+      for (let j = 1; j <= limit; j++) {
+        const oy = aboveDy - j * step;
+        if (this.blockAt(s, oy, 0).y < 0) break;
+        if (accept(oy)) return;
+      }
+    }
+
+    this.commitClamped(s, aboveDy, step, limit);
+  }
+
+  /** Last resort: slide a candidate onto the canvas and keep it off every placed block. */
+  private commitClamped(s: LabelSlot, aboveDy: number, step: number, limit: number): void {
+    const oys: number[] = [0, aboveDy];
+    for (let k = 1; k <= limit; k++) {
+      oys.push(k * step);
+      oys.push(aboveDy - k * step);
+    }
+    for (const oy of oys) {
+      const fit = this.clampBlock(s, oy);
+      if (!this.rectOnCanvas(fit.rect) || this.hitsPlaced(fit.rect)) continue;
+      this.commitLabel(s, fit.ox, fit.oy);
+      return;
+    }
+    const fit = this.clampBlock(s, 0);
+    this.commitLabel(s, fit.ox, fit.oy);
+  }
+
+  private clampBlock(s: LabelSlot, oy: number): { ox: number; oy: number; rect: ScreenRect } {
+    const raw = this.blockAt(s, oy, 0);
+    let y = raw.y;
+    if (y + raw.h > this.h) y = this.h - raw.h;
+    if (y < 0) y = 0;
+    let x = raw.x;
+    if (x + raw.w > this.w) x = this.w - raw.w;
+    if (x < 0) x = 0;
+    const ox = x - raw.x;
+    const oy2 = oy + (y - raw.y);
+    return { ox, oy: oy2, rect: this.blockAt(s, oy2, ox) };
+  }
+
+  private commitLabel(s: LabelSlot, ox: number, oy: number): void {
     s.dx = ox;
     s.dy = oy;
-    s.spread = spread;
-    this.pushPlaced(s.plateX + ox, s.plateY + oy, s.plateW, s.plateH);
+    const rect = this.blockAt(s, oy, ox);
+    this.pushPlaced(rect.x, rect.y, rect.w, rect.h);
   }
 
   private pushPlaced(x: number, y: number, w: number, h: number): void {
@@ -2531,12 +2594,17 @@ export class Renderer {
     this.placedCount++;
   }
 
-  private hitsPlaced(x: number, y: number, w: number, h: number): boolean {
-    const m = LABEL_MARGIN;
+  /** True when `r` inflated by LABEL_GAP hits any placed block inflated the same way. */
+  private hitsPlaced(r: ScreenRect): boolean {
+    const g = LABEL_GAP;
+    const x = r.x - g;
+    const y = r.y - g;
+    const right = r.x + r.w + g;
+    const bottom = r.y + r.h + g;
     const rects = this.placedRects;
     for (let i = 0; i < this.placedCount; i++) {
       const p = rects[i];
-      if (x < p.x + p.w + m && x + w + m > p.x && y < p.y + p.h + m && y + h + m > p.y) return true;
+      if (x < p.x + p.w + g && right > p.x - g && y < p.y + p.h + g && bottom > p.y - g) return true;
     }
     return false;
   }
@@ -2562,13 +2630,14 @@ export class Renderer {
     const oy = s.dy;
     if (ox * ox + oy * oy > LABEL_LEADER_MIN * LABEL_LEADER_MIN) this.paintLeader(s);
     ctx.save();
-    const barX = s.spread ? s.barX : s.ringX + ox - s.barW / 2;
-    const barY = s.spread ? s.barY : s.plateY + oy - s.barH;
+    // Bar sits on the plate. Same edges as blockAt, so the layout rect is the drawn block.
+    const barX = s.ringX + ox - s.barW / 2;
+    const barY = s.plateY + oy - s.barH;
     ctx.fillStyle = "#111018";
     ctx.fillRect(barX, barY, s.barW, s.barH);
     ctx.fillStyle = s.accent;
     ctx.fillRect(barX, barY, s.barW * s.ratio, s.barH);
-    const plateX = s.plateX + ox;
+    const plateX = s.ringX + ox - s.plateW / 2;
     const plateY = s.plateY + oy;
     const plateW = s.plateW;
     const plateH = s.plateH;
