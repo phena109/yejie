@@ -534,6 +534,14 @@ const UNIT_HIT_WIDTH = 0.7;
 const UNIT_ALPHA_HIT = 40;
 /** Screen-pixel radius sampled around the pointer when reading stamp alpha. */
 const UNIT_ALPHA_RADIUS = 2;
+/** Feet-ring pick is the drawn ellipse grown by this factor. Both radii scale. */
+const UNIT_RING_HIT_SCALE = 1.15;
+/** Lower-body box starts this far down the stamp (0 = top, 1 = feet). */
+const UNIT_LOWER_TOP = 0.45;
+/** Lower-body box is at least this fraction of the stamp width, centred on the ring. */
+const UNIT_LOWER_STAMP_W = 0.55;
+/** And at least this fraction of the ring diameter (2 * RING_RX * scale). */
+const UNIT_LOWER_RING_W = 0.8;
 /** Occlusion ghost. Full-opacity source, drawn over whatever hid the body. */
 const GHOST_ALPHA = 0.45;
 /**
@@ -813,9 +821,11 @@ export class Renderer {
   }
 
   /**
-   * Living unit under the pointer. Opaque body pixels win, front-most first
-   * (reverse of cellsInDrawOrder, and within a cell the last unit drawn).
-   * Feet rings are tested only when no body pixel hits, again front-most first.
+   * Living unit under the pointer. Front-most first (reverse of cellsInDrawOrder,
+   * and within a cell the last unit drawn).
+   * A unit matches on stamp alpha, the enlarged feet ring, or the lower-body box.
+   * An alpha hit beats another unit's ring or lower body, so a visible head still
+   * wins where the nearer unit's pixels are not under the pointer.
    * A miss returns null so the caller can fall back to hitTile.
    */
   hitUnit(sx: number, sy: number, map: GameMap, units: Unit[]): Unit | null {
@@ -837,23 +847,35 @@ export class Renderer {
     return this.pickDrawnUnit(sx, sy, drawOrder, map);
   }
 
-  /** `drawOrder` is back-to-front, matching draw(). Body pixels, then rings. */
+  /**
+   * `drawOrder` is back-to-front, matching draw().
+   * The first alpha hit wins. A feet or lower-body hit is kept only until an alpha hit,
+   * and only the front-most of those is used when no stamp pixel matches.
+   */
   private pickDrawnUnit(sx: number, sy: number, drawOrder: Unit[], map: GameMap): Unit | null {
+    let feet: Unit | null = null;
     for (let i = drawOrder.length - 1; i >= 0; i--) {
-      if (this.unitContainsPoint(sx, sy, drawOrder[i], map)) return drawOrder[i];
+      const hit = this.unitContainsPoint(sx, sy, drawOrder[i], map);
+      if (hit === "alpha") return drawOrder[i];
+      if (hit === "feet" && feet == null) feet = drawOrder[i];
     }
-    for (let i = drawOrder.length - 1; i >= 0; i--) {
-      if (this.unitRingHit(sx, sy, drawOrder[i], map)) return drawOrder[i];
-    }
-    return null;
+    return feet;
   }
 
   /**
-   * True when the pointer is on this unit's drawn pixels, full height including the head.
-   * Alpha comes from a cached mask of the stamp image. A stamp with no readable image
-   * falls back to the body rect.
+   * "alpha" — stamp pixels, full height including the head. A stamp with no readable
+   * image falls back to the body rect.
+   * "feet" — enlarged feet ring, or the lower-body box. Both count even where the
+   * stamp is transparent.
    */
-  private unitContainsPoint(sx: number, sy: number, u: Unit, map: GameMap): boolean {
+  private unitContainsPoint(sx: number, sy: number, u: Unit, map: GameMap): "alpha" | "feet" | null {
+    if (this.unitAlphaHit(sx, sy, u, map)) return "alpha";
+    if (this.unitRingHit(sx, sy, u, map) || this.unitLowerBodyHit(sx, sy, u, map)) return "feet";
+    return null;
+  }
+
+  /** True when the pointer is on this unit's drawn pixels. */
+  private unitAlphaHit(sx: number, sy: number, u: Unit, map: GameMap): boolean {
     const stamp = this.bodyStamps.get(u.id);
     if (stamp && stamp.dw > 0 && stamp.dh > 0) {
       if (sx < stamp.dx || sy < stamp.dy || sx > stamp.dx + stamp.dw || sy > stamp.dy + stamp.dh) return false;
@@ -863,14 +885,31 @@ export class Renderer {
     return rectHasPoint(this.unitBodyRect(u, this.unitPose(u, map)), sx, sy);
   }
 
+  /** Feet ring ellipse, 1.15× the drawn ring, centred on the same point as the paint. */
   private unitRingHit(sx: number, sy: number, u: Unit, map: GameMap): boolean {
     const pose = this.unitPose(u, map);
-    const rx = RING_RX * pose.scale;
-    const ry = RING_RY * pose.scale;
+    const rx = RING_RX * pose.scale * UNIT_RING_HIT_SCALE;
+    const ry = RING_RY * pose.scale * UNIT_RING_HIT_SCALE;
     if (rx <= 0 || ry <= 0) return false;
     const nx = (sx - pose.x) / rx;
     const ny = (sy - (pose.feetY + RING_DROP * pose.z)) / ry;
     return nx * nx + ny * ny <= 1;
+  }
+
+  /**
+   * Lower body, centred on the ring x. From 45% down the stamp to the bottom of
+   * the drawn ring (ring centre + RING_RY * scale). Width is the larger of 55% of
+   * the stamp and 80% of the ring diameter.
+   */
+  private unitLowerBodyHit(sx: number, sy: number, u: Unit, map: GameMap): boolean {
+    const stamp = this.bodyStamps.get(u.id);
+    if (!stamp || !(stamp.dw > 0) || !(stamp.dh > 0)) return false;
+    const pose = this.unitPose(u, map);
+    const width = Math.max(stamp.dw * UNIT_LOWER_STAMP_W, 2 * RING_RX * pose.scale * UNIT_LOWER_RING_W);
+    const left = pose.x - width / 2;
+    const top = stamp.dy + stamp.dh * UNIT_LOWER_TOP;
+    const bottom = pose.feetY + RING_DROP * pose.z + RING_RY * pose.scale;
+    return sx >= left && sx <= left + width && sy >= top && sy <= bottom;
   }
 
   /**
