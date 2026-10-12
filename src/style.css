@@ -295,10 +295,6 @@ body {
   letter-spacing: 0.06em;
 }
 
-#dock button:disabled {
-  opacity: 0.35;
-}
-
 #btn-confirm:not(:disabled) {
   background: var(--neon);
   color: #04110f;
@@ -494,10 +490,6 @@ button.ghost,
   border: 1px solid #2a2a3a !important;
 }
 
-button:disabled {
-  opacity: 0.35;
-}
-
 #btn-next[hidden] {
   display: none;
 }
@@ -660,8 +652,37 @@ button:disabled {
   color: #ffe7a0;
   font: inherit;
 }
-.test-jump button:active { background: rgba(229, 197, 106, 0.28); }
+.test-jump button:not(:disabled):active { background: rgba(229, 197, 106, 0.28); }
 #btn-pause-next { color: #ffe7a0; border-color: rgba(229, 197, 106, 0.5); }
+
+/* Disabled HUD, dock, and modal controls. IDs outrank the ghost/HUD color rules. */
+button:disabled,
+button:disabled:hover,
+button:disabled:active,
+:is(
+  #btn-bag,
+  #btn-bag-title,
+  #btn-rotate,
+  #btn-pause,
+  #btn-end,
+  #btn-cancel,
+  #btn-wait,
+  #btn-skill,
+  #btn-confirm,
+  #dock button,
+  #modal-card > button,
+  #title-card > button,
+  #pause-card > button,
+  #confirm-card > button,
+  #briefing-card > button,
+  #result-card > button
+):is(:disabled, :disabled:hover, :disabled:active) {
+  opacity: 0.42;
+  color: var(--muted) !important;
+  border-color: rgba(139, 147, 167, 0.4) !important;
+  cursor: default;
+  filter: grayscale(1);
+}
 
 /* In-mission visual-novel beat: keep the board visible beneath the scene. */
 #vn {
