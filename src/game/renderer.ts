@@ -536,6 +536,12 @@ const UNIT_ALPHA_HIT = 40;
 const UNIT_ALPHA_RADIUS = 2;
 /** Occlusion ghost. Full-opacity source, drawn over whatever hid the body. */
 const GHOST_ALPHA = 0.45;
+/**
+ * Spent player units stay readable: the body is about 78% opaque and, where
+ * canvas filters work, mildly desaturated and darkened. Rings and plates are not faded.
+ */
+const ACTED_BODY_ALPHA = 0.78;
+const ACTED_BODY_FILTER = "saturate(0.55) brightness(0.8)";
 /** Gap between label blocks, and between a side slot and the feet ring. */
 const LABEL_MARGIN = 2;
 /** Draw a leader when a plate leaves its default anchor by more than this. */
@@ -544,6 +550,19 @@ const MAP_ANGLES = ["front", "ne", "right", "se", "back", "sw", "left", "nw"] as
 
 function unitDrawHeight(zoom: number, elite: boolean): number {
   return rigDrawHeight(zoom) * (elite ? ELITE_SCALE : 1);
+}
+
+/** Team colour pulled a little toward neutral grey. Same strength, quieter ring. */
+function greyerAccent(hex: string): string {
+  if (hex.length !== 7 || hex.charCodeAt(0) !== 35) return hex;
+  const n = Number.parseInt(hex.slice(1), 16);
+  if (!Number.isFinite(n)) return hex;
+  const mix = (c: number): number => Math.round(c * 0.72 + 0x96 * 0.28);
+  const r = mix((n >> 16) & 255);
+  const g = mix((n >> 8) & 255);
+  const b = mix(n & 255);
+  const h = (c: number): string => c.toString(16).padStart(2, "0");
+  return `#${h(r)}${h(g)}${h(b)}`;
 }
 
 export class Renderer {
@@ -2142,10 +2161,9 @@ export class Renderer {
     const accent = factionColor(u);
     const done = u.acted;
     // Idle NPCs are created with acted set, and enemies flip it during their phase.
-    // Fade only a player-controlled unit that has finished acting this turn.
+    // Dim only the body of a player-controlled unit that has finished acting.
     const dim = isPlayerControlled(u) && u.acted;
     ctx.save();
-    if (dim) ctx.globalAlpha *= 0.45;
 
     ctx.fillStyle = "rgba(0,0,0,0.4)";
     ctx.beginPath();
@@ -2165,34 +2183,39 @@ export class Renderer {
       ctx.stroke();
     }
 
-    const project = this.projectFor(u, map);
-    const shifted: ProjectFn = (lx, ly, lz) => {
-      const q = project(lx, ly, lz);
-      return { x: q.x + dx, y: q.y + dy, d: q.d };
+    // Doll, painted Dana/Mara, and the rig all record an undimmed stamp inside this callback.
+    const drawBody = (): void => {
+      const project = this.projectFor(u, map);
+      const shifted: ProjectFn = (lx, ly, lz) => {
+        const q = project(lx, ly, lz);
+        return { x: q.x + dx, y: q.y + dy, d: q.d };
+      };
+      // Mara and Dana: painted 8-dir map sprites. Priya: authored sprite billboard.
+      // The glTF Mara portrait stays off the map (it filled part of the billboard and read as navy-on-dark).
+      // Grid facing: 0 N/front, 1 NE, 2 E/right, 3 SE, 4 S/back, 5 SW, 6 W/left, 7 NW.
+      if (u.archetype === "mara" || u.archetype === "dana") {
+        const angles = u.archetype === "mara" ? this.maraAngles : this.danaAngles;
+        const painted = angles[MAP_ANGLES[u.dir]];
+        const fallback = this.mapDolls[u.archetype];
+        if (painted.complete && painted.naturalWidth > 0 && painted.naturalHeight > 0) {
+          this.drawMapDoll(u.id, painted, x, feetY, z, face, elite, false);
+        } else if (fallback.complete && fallback.naturalWidth > 0 && fallback.naturalHeight > 0) {
+          this.drawMapDoll(u.id, fallback, x, feetY, z, face, elite, false);
+        } else {
+          this.rememberRig(u.id, drawRig(ctx, shifted, u, this.time, z, this.yaw));
+        }
+      } else {
+        // Priya remains the single authored sprite billboard.
+        const doll = u.archetype === "priya" ? this.mapDolls.priya : null;
+        if (doll && doll.complete && doll.naturalWidth > 0 && doll.naturalHeight > 0) {
+          this.drawMapDoll(u.id, doll, x, feetY, z, face, elite);
+        } else {
+          this.rememberRig(u.id, drawRig(ctx, shifted, u, this.time, z, this.yaw));
+        }
+      }
     };
-    // Mara and Dana: painted 8-dir map sprites. Priya: authored sprite billboard.
-    // The glTF Mara portrait stays off the map (it filled part of the billboard and read as navy-on-dark).
-    // Grid facing: 0 N/front, 1 NE, 2 E/right, 3 SE, 4 S/back, 5 SW, 6 W/left, 7 NW.
-    if (u.archetype === "mara" || u.archetype === "dana") {
-      const angles = u.archetype === "mara" ? this.maraAngles : this.danaAngles;
-      const painted = angles[MAP_ANGLES[u.dir]];
-      const fallback = this.mapDolls[u.archetype];
-      if (painted.complete && painted.naturalWidth > 0 && painted.naturalHeight > 0) {
-        this.drawMapDoll(u.id, painted, x, feetY, z, face, elite, false);
-      } else if (fallback.complete && fallback.naturalWidth > 0 && fallback.naturalHeight > 0) {
-        this.drawMapDoll(u.id, fallback, x, feetY, z, face, elite, false);
-      } else {
-        this.rememberRig(u.id, drawRig(ctx, shifted, u, this.time, z, this.yaw));
-      }
-    } else {
-      // Priya remains the single authored sprite billboard.
-      const doll = u.archetype === "priya" ? this.mapDolls.priya : null;
-      if (doll && doll.complete && doll.naturalWidth > 0 && doll.naturalHeight > 0) {
-        this.drawMapDoll(u.id, doll, x, feetY, z, face, elite);
-      } else {
-        this.rememberRig(u.id, drawRig(ctx, shifted, u, this.time, z, this.yaw));
-      }
-    }
+    if (dim) this.withActedBody(drawBody);
+    else drawBody();
 
     this.drawFacingWedge(u, map, x, feetY, z);
 
@@ -2215,6 +2238,29 @@ export class Renderer {
       ctx.textBaseline = "middle";
       ctx.fillText("E", ex, ey + 0.4 * scale);
       ctx.textBaseline = "alphabetic";
+    }
+  }
+
+  /**
+   * Mild spent look on the sprite only. save/restore clears alpha and filter
+   * before the facing wedge, rings, and plates. The stamp stored by the draw
+   * is the source image, so the ghost and alpha hit test stay undimmed.
+   */
+  private withActedBody(draw: () => void): void {
+    const ctx = this.ctx;
+    ctx.save();
+    ctx.globalAlpha *= ACTED_BODY_ALPHA;
+    if (typeof ctx.filter === "string") {
+      try {
+        ctx.filter = ACTED_BODY_FILTER;
+      } catch {
+        // Context accepts no filter. The alpha still marks the unit.
+      }
+    }
+    try {
+      draw();
+    } finally {
+      ctx.restore();
     }
   }
 
@@ -2460,7 +2506,7 @@ export class Renderer {
     const ctx = this.ctx;
     ctx.save();
     ctx.globalAlpha = 0.55;
-    ctx.strokeStyle = s.accent;
+    ctx.strokeStyle = s.dim ? greyerAccent(s.accent) : s.accent;
     ctx.lineWidth = Math.max(2, 2.2 * s.z);
     ctx.beginPath();
     ctx.ellipse(s.ringX, s.ringY, s.ringRx, s.ringRy, 0, 0, Math.PI * 2);
@@ -2477,7 +2523,6 @@ export class Renderer {
     const oy = s.dy;
     if (ox * ox + oy * oy > LABEL_LEADER_MIN * LABEL_LEADER_MIN) this.paintLeader(s);
     ctx.save();
-    if (s.dim) ctx.globalAlpha *= 0.45;
     const barX = s.spread ? s.barX : s.ringX + ox - s.barW / 2;
     const barY = s.spread ? s.barY : s.plateY + oy - s.barH;
     ctx.fillStyle = "#111018";
