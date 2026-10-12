@@ -97,8 +97,8 @@ interface ScreenRect {
   h: number;
 }
 
-/** What drawUnit put on screen this frame, so the occlusion ghost can reuse it. */
-interface BodyStamp {
+/** What drawUnit put on screen this frame, so the occlusion ghost and hit tests can reuse it. */
+export interface BodyStamp {
   source: CanvasImageSource;
   sw: number;
   sh: number;
@@ -107,6 +107,16 @@ interface BodyStamp {
   dw: number;
   dh: number;
   mirror: boolean;
+}
+
+/** Cached alpha of one stamp source. `ok` is false when the bitmap cannot be read. */
+interface AlphaMask {
+  w: number;
+  h: number;
+  alpha: Uint8Array;
+  rev: number;
+  sig: string;
+  ok: boolean;
 }
 
 /** Name plate plus HP bar, measured at the default anchor. Reused across frames. */
@@ -153,6 +163,13 @@ function rectsOverlap(a: ScreenRect, b: ScreenRect): boolean {
 
 function rectHasPoint(r: ScreenRect, x: number, y: number): boolean {
   return x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h;
+}
+
+function packAlpha(data: Uint8ClampedArray, n: number): Uint8Array {
+  const alpha = new Uint8Array(n);
+  const count = Math.min(n, data.length >> 2);
+  for (let i = 0, p = 0; i < count; i++, p += 4) alpha[i] = data[p + 3];
+  return alpha;
 }
 
 function segmentsIntersect(a: Vec2, b: Vec2, c: Vec2, d: Vec2): boolean {
@@ -511,8 +528,12 @@ const RING_DROP = 1;
  * drawMapDoll sprites are rigDrawHeight tall and about half as wide; rigs use the same figure box.
  */
 const UNIT_BODY_ASPECT = 0.5;
-/** Fraction of the drawn sprite width that counts as the body, so neighbours are not stolen. */
+/** Fallback body width when a stamp image cannot be read. Full height is still used. */
 const UNIT_HIT_WIDTH = 0.7;
+/** Source alpha above this (out of 255) counts as the unit. */
+const UNIT_ALPHA_HIT = 40;
+/** Screen-pixel radius sampled around the pointer when reading stamp alpha. */
+const UNIT_ALPHA_RADIUS = 2;
 /** Occlusion ghost. Full-opacity source, drawn over whatever hid the body. */
 const GHOST_ALPHA = 0.45;
 /** Gap between label blocks, and between a side slot and the feet ring. */
@@ -572,7 +593,12 @@ export class Renderer {
     nw: new Image(),
   };
   /** Per-unit body drawn this frame. Rig entries are copies; the WebGL canvas is shared. */
-  private readonly bodyStamps = new Map<string, BodyStamp>();
+  readonly bodyStamps = new Map<string, BodyStamp>();
+  /** Alpha of each stamp source. Keyed by the image (one file per angle) and invalidated when a rig frame repaints that canvas. */
+  private readonly alphaMasks = new WeakMap<CanvasImageSource, AlphaMask>();
+  private readonly sourceRev = new WeakMap<CanvasImageSource, number>();
+  private alphaReadCanvas: HTMLCanvasElement | null = null;
+  private alphaReadCtx: CanvasRenderingContext2D | null = null;
   private readonly rigSnaps = new Map<string, HTMLCanvasElement>();
   private ghostCanvas: HTMLCanvasElement | null = null;
   private ghostCtx: CanvasRenderingContext2D | null = null;
@@ -768,34 +794,58 @@ export class Renderer {
   }
 
   /**
-   * Living unit whose drawn body or feet ring contains the pointer.
-   * Later cells in cellsInDrawOrder are in front, matching draw().
-   * A cell may hold several living units; the one drawn last (front-most) wins.
+   * Living unit under the pointer. Opaque body pixels win, front-most first
+   * (reverse of cellsInDrawOrder, and within a cell the last unit drawn).
+   * Feet rings are tested only when no body pixel hits, again front-most first.
+   * A miss returns null so the caller can fall back to hitTile.
    */
   hitUnit(sx: number, sy: number, map: GameMap, units: Unit[]): Unit | null {
     this.syncMap(map);
-    const drawn = new Map<string, Unit[]>();
+    const byTile = new Map<string, Unit[]>();
     for (const u of units) {
       if (u.dead) continue;
       const k = key(u.x, u.y);
-      const list = drawn.get(k);
+      const list = byTile.get(k);
       if (list) list.push(u);
-      else drawn.set(k, [u]);
+      else byTile.set(k, [u]);
     }
-    let hit: Unit | null = null;
+    const drawOrder: Unit[] = [];
     for (const c of this.cellsInDrawOrder(map)) {
-      const list = drawn.get(key(c.x, c.y));
+      const list = byTile.get(key(c.x, c.y));
       if (!list) continue;
-      for (const u of list) {
-        if (this.unitContainsPoint(sx, sy, u, map)) hit = u;
-      }
+      for (const u of list) drawOrder.push(u);
     }
-    return hit;
+    return this.pickDrawnUnit(sx, sy, drawOrder, map);
   }
 
+  /** `drawOrder` is back-to-front, matching draw(). Body pixels, then rings. */
+  private pickDrawnUnit(sx: number, sy: number, drawOrder: Unit[], map: GameMap): Unit | null {
+    for (let i = drawOrder.length - 1; i >= 0; i--) {
+      if (this.unitContainsPoint(sx, sy, drawOrder[i], map)) return drawOrder[i];
+    }
+    for (let i = drawOrder.length - 1; i >= 0; i--) {
+      if (this.unitRingHit(sx, sy, drawOrder[i], map)) return drawOrder[i];
+    }
+    return null;
+  }
+
+  /**
+   * True when the pointer is on this unit's drawn pixels, full height including the head.
+   * Alpha comes from a cached mask of the stamp image. A stamp with no readable image
+   * falls back to the body rect.
+   */
   private unitContainsPoint(sx: number, sy: number, u: Unit, map: GameMap): boolean {
+    const stamp = this.bodyStamps.get(u.id);
+    if (stamp && stamp.dw > 0 && stamp.dh > 0) {
+      if (sx < stamp.dx || sy < stamp.dy || sx > stamp.dx + stamp.dw || sy > stamp.dy + stamp.dh) return false;
+      const pixel = this.stampPixelHit(stamp, sx, sy);
+      if (pixel != null) return pixel;
+    }
+    return rectHasPoint(this.unitBodyRect(u, this.unitPose(u, map)), sx, sy);
+  }
+
+  private unitRingHit(sx: number, sy: number, u: Unit, map: GameMap): boolean {
     const pose = this.unitPose(u, map);
-    if (rectHasPoint(this.unitBodyRect(u, pose), sx, sy)) return true;
     const rx = RING_RX * pose.scale;
     const ry = RING_RY * pose.scale;
     if (rx <= 0 || ry <= 0) return false;
@@ -805,8 +855,8 @@ export class Renderer {
   }
 
   /**
-   * Body box for this frame. Prefer the rect drawMapDoll / drawRig cached for the ghost pass
-   * (full height, about 70% of the drawn width). Until that exists, use the computed billboard.
+   * Fallback body box when the stamp image cannot be read: full drawn height,
+   * about 70% of the width. Before a stamp exists, the computed billboard.
    */
   private unitBodyRect(u: Unit, pose: { x: number; feetY: number; dh: number }): ScreenRect {
     const stamp = this.bodyStamps.get(u.id);
@@ -816,6 +866,96 @@ export class Renderer {
     }
     const dw = pose.dh * UNIT_BODY_ASPECT;
     return { x: pose.x - dw / 2, y: pose.feetY - pose.dh, w: dw, h: pose.dh };
+  }
+
+  /** True when stamp alpha near the pointer is opaque. Null when the bitmap cannot be read. */
+  private stampPixelHit(stamp: BodyStamp, sx: number, sy: number): boolean | null {
+    const mask = this.alphaMask(stamp);
+    if (!mask) return null;
+    const rad = UNIT_ALPHA_RADIUS;
+    const r2 = rad * rad;
+    for (let oy = -rad; oy <= rad; oy++) {
+      for (let ox = -rad; ox <= rad; ox++) {
+        if (ox * ox + oy * oy > r2) continue;
+        if (this.stampAlpha(stamp, mask, sx + ox, sy + oy) > UNIT_ALPHA_HIT) return true;
+      }
+    }
+    return false;
+  }
+
+  private stampAlpha(stamp: BodyStamp, mask: AlphaMask, sx: number, sy: number): number {
+    let lx = sx - stamp.dx;
+    const ly = sy - stamp.dy;
+    if (lx < 0 || ly < 0 || lx >= stamp.dw || ly >= stamp.dh) return 0;
+    if (stamp.mirror) lx = stamp.dw - lx;
+    const ix = Math.min(mask.w - 1, Math.floor((lx / stamp.dw) * mask.w));
+    const iy = Math.min(mask.h - 1, Math.floor((ly / stamp.dh) * mask.h));
+    if (ix < 0 || iy < 0) return 0;
+    return mask.alpha[iy * mask.w + ix];
+  }
+
+  /**
+   * Lazily build a small alpha mask for this stamp's source.
+   * Map sprites are keyed by their image (each angle is its own file).
+   * Rig canvases are invalidated when rememberRig bumps their revision.
+   * The main framebuffer is never read.
+   */
+  private alphaMask(stamp: BodyStamp): AlphaMask | null {
+    const source = stamp.source;
+    const sw = Math.round(stamp.sw);
+    const sh = Math.round(stamp.sh);
+    if (!(sw > 0) || !(sh > 0)) return null;
+    const rev = this.sourceRev.get(source) ?? 0;
+    const sig = source instanceof HTMLImageElement ? `${source.src}:${source.naturalWidth}x${source.naturalHeight}` : `${sw}x${sh}`;
+    const cached = this.alphaMasks.get(source);
+    if (cached && cached.rev === rev && cached.w === sw && cached.h === sh && cached.sig === sig) {
+      return cached.ok ? cached : null;
+    }
+    const alpha = this.readAlpha(source, sw, sh);
+    const mask: AlphaMask = {
+      w: sw,
+      h: sh,
+      alpha: alpha ?? new Uint8Array(0),
+      rev,
+      sig,
+      ok: alpha != null,
+    };
+    this.alphaMasks.set(source, mask);
+    return mask.ok ? mask : null;
+  }
+
+  private readAlpha(source: CanvasImageSource, sw: number, sh: number): Uint8Array | null {
+    try {
+      if (source instanceof HTMLCanvasElement) {
+        const direct = source.getContext("2d");
+        if (direct && source.width >= sw && source.height >= sh) {
+          return packAlpha(direct.getImageData(0, 0, sw, sh).data, sw * sh);
+        }
+      }
+      const g = this.alphaReader();
+      const canvas = this.alphaReadCanvas;
+      if (!g || !canvas) return null;
+      if (canvas.width !== sw || canvas.height !== sh) {
+        canvas.width = sw;
+        canvas.height = sh;
+      }
+      g.setTransform(1, 0, 0, 1, 0, 0);
+      g.globalAlpha = 1;
+      g.globalCompositeOperation = "source-over";
+      g.clearRect(0, 0, sw, sh);
+      g.drawImage(source, 0, 0, sw, sh);
+      return packAlpha(g.getImageData(0, 0, sw, sh).data, sw * sh);
+    } catch {
+      return null;
+    }
+  }
+
+  private alphaReader(): CanvasRenderingContext2D | null {
+    if (!this.alphaReadCanvas || !this.alphaReadCtx) {
+      this.alphaReadCanvas = document.createElement("canvas");
+      this.alphaReadCtx = this.alphaReadCanvas.getContext("2d", { willReadFrequently: true });
+    }
+    return this.alphaReadCtx;
   }
 
   private hitPrism(sx: number, sy: number, t: Tile): boolean {
@@ -1822,6 +1962,7 @@ export class Renderer {
     g.globalCompositeOperation = "source-over";
     g.clearRect(0, 0, snap.width, snap.height);
     g.drawImage(bill.source, 0, 0);
+    this.sourceRev.set(snap, (this.sourceRev.get(snap) ?? 0) + 1);
     this.bodyStamps.set(id, {
       source: snap,
       sw: snap.width,
@@ -2099,14 +2240,7 @@ export class Renderer {
   private hoveredUnit(drawn: Unit[], map: GameMap, overlays: DrawOverlays): Unit | null {
     if (overlays.hover !== undefined) return overlays.hover;
     if (!this.pointerInside) return this.hover;
-    let found: Unit | null = null;
-    for (let i = drawn.length - 1; i >= 0; i--) {
-      const u = drawn[i];
-      if (this.unitContainsPoint(this.pointerX, this.pointerY, u, map)) {
-        found = u;
-        break;
-      }
-    }
+    const found = this.pickDrawnUnit(this.pointerX, this.pointerY, drawn, map);
     this.hover = found;
     return found;
   }
@@ -2153,7 +2287,7 @@ export class Renderer {
     return s;
   }
 
-  /** Team rings stay on the tile centre. Plates and HP bars share one block and move only to stay apart. */
+  /** Team rings stay on the tile centre. Each plate stays centred on its own ring and moves only vertically. */
   private drawUnitOverlays(drawn: Unit[], map: GameMap, overlays: DrawOverlays): void {
     const n = drawn.length;
     this.labelCount = n;
@@ -2243,7 +2377,6 @@ export class Renderer {
       const a = pool[ia];
       const b = pool[ib];
       if (a.pri !== b.pri) return a.pri - b.pri;
-      if (a.feetY !== b.feetY) return b.feetY - a.feetY;
       return b.drawIndex - a.drawIndex;
     });
     for (let i = 0; i < n; i++) this.placeLabel(pool[this.labelOrder[i]]);
@@ -2267,82 +2400,37 @@ export class Renderer {
     }
   }
 
-  /** Spread anchor: plate under the ring and HP bar over the head. Offsets use the compact stack. */
-  private labelClear(s: LabelSlot, ox: number, oy: number, spread: boolean, bodies: boolean): boolean {
-    if (spread) {
-      if (this.hitsPlaced(s.plateX, s.plateY, s.plateW, s.plateH)) return false;
-      if (this.hitsPlaced(s.barX, s.barY, s.barW, s.barH)) return false;
-      if (!bodies) return true;
-      if (this.hitsOtherBody(s.id, s.plateX, s.plateY, s.plateW, s.plateH)) return false;
-      return !this.hitsOtherBody(s.id, s.barX, s.barY, s.barW, s.barH);
-    }
-    const x = s.ringX + ox - s.compactW / 2;
-    const y = s.plateY + oy - s.barH;
-    if (this.hitsPlaced(x, y, s.compactW, s.compactH)) return false;
-    if (!bodies) return true;
-    return !this.hitsOtherBody(s.id, x, y, s.compactW, s.compactH);
-  }
-
+  /**
+   * Plate stays on its own ring x. Order: under the ring, above the head (above the HP bar),
+   * then further down by one label block plus the 2px margin. The HP bar stays over the head.
+   */
   private placeLabel(s: LabelSlot): void {
-    const leftDx = -(s.ringRx + LABEL_MARGIN + s.compactW / 2);
-    const rightDx = s.ringRx + LABEL_MARGIN + s.compactW / 2;
     const aboveDy = s.barY - LABEL_MARGIN - (s.plateY + s.plateH);
-    const step = Math.max(LABEL_MARGIN, s.compactH + LABEL_MARGIN);
-    const opts: Array<[number, number, boolean]> = [
-      [0, 0, true],
-      [leftDx, 0, false],
-      [rightDx, 0, false],
-      [0, aboveDy, false],
-    ];
-    let fbX = 0;
-    let fbY = 0;
-    let fbSpread = true;
-    let haveFb = false;
-    const consider = (ox: number, oy: number, spread: boolean): boolean => {
-      const clearP = this.labelClear(s, ox, oy, spread, false);
-      if (clearP && !haveFb) {
-        fbX = ox;
-        fbY = oy;
-        fbSpread = spread;
-        haveFb = true;
-      }
-      if (clearP && this.labelClear(s, ox, oy, spread, true)) {
-        this.commitLabel(s, ox, oy, spread);
-        return true;
-      }
-      return false;
+    const step = s.compactH + LABEL_MARGIN;
+    const tryAt = (oy: number): boolean => {
+      if (this.hitsPlaced(s.plateX, s.plateY + oy, s.plateW, s.plateH)) return false;
+      this.commitLabel(s, 0, oy, true);
+      return true;
     };
-    for (const [ox, oy, spread] of opts) {
-      if (consider(ox, oy, spread)) return;
-    }
+    if (tryAt(0)) return;
+    if (tryAt(aboveDy)) return;
     const limit = Math.max(24, this.labelCount + 8);
     for (let k = 1; k <= limit; k++) {
-      if (consider(0, k * step, false)) return;
+      if (tryAt(k * step)) return;
     }
-    if (!haveFb) {
-      const extra = limit + this.labelCount + 4;
-      for (let k = limit + 1; k <= extra; k++) {
-        if (this.labelClear(s, 0, k * step, false, false)) {
-          this.commitLabel(s, 0, k * step, false);
-          return;
-        }
-      }
-      this.commitLabel(s, 0, (extra + 1) * step, false);
-      return;
+    let top = s.plateY + (limit + 1) * step;
+    for (let i = 0; i < this.placedCount; i++) {
+      const y = this.placedRects[i].y + this.placedRects[i].h + LABEL_MARGIN;
+      if (y > top) top = y;
     }
-    this.commitLabel(s, fbX, fbY, fbSpread);
+    this.commitLabel(s, 0, top - s.plateY, true);
   }
 
   private commitLabel(s: LabelSlot, ox: number, oy: number, spread: boolean): void {
     s.dx = ox;
     s.dy = oy;
     s.spread = spread;
-    if (spread) {
-      this.pushPlaced(s.plateX, s.plateY, s.plateW, s.plateH);
-      this.pushPlaced(s.barX, s.barY, s.barW, s.barH);
-      return;
-    }
-    this.pushPlaced(s.ringX + ox - s.compactW / 2, s.plateY + oy - s.barH, s.compactW, s.compactH);
+    this.pushPlaced(s.plateX + ox, s.plateY + oy, s.plateW, s.plateH);
   }
 
   private pushPlaced(x: number, y: number, w: number, h: number): void {
@@ -2364,16 +2452,6 @@ export class Renderer {
     for (let i = 0; i < this.placedCount; i++) {
       const p = rects[i];
       if (x < p.x + p.w + m && x + w + m > p.x && y < p.y + p.h + m && y + h + m > p.y) return true;
-    }
-    return false;
-  }
-
-  private hitsOtherBody(id: string, x: number, y: number, w: number, h: number): boolean {
-    const pool = this.labelPool;
-    for (let i = 0; i < this.labelCount; i++) {
-      const o = pool[i];
-      if (o.id === id) continue;
-      if (x < o.bodyX + o.bodyW && x + w > o.bodyX && y < o.bodyY + o.bodyH && y + h > o.bodyY) return true;
     }
     return false;
   }
@@ -2428,32 +2506,12 @@ export class Renderer {
     ctx.restore();
   }
 
-  /** Thin team-coloured line from the plate edge to the feet ring. */
+  /** Thin team-coloured line from the plate's top centre to this unit's ring centre. */
   private paintLeader(s: LabelSlot): void {
-    if (!(s.ringRx > 0) || !(s.ringRy > 0)) return;
-    const px = s.plateX + s.dx;
-    const py = s.plateY + s.dy;
-    const cx = px + s.plateW / 2;
-    const cy = py + s.plateH / 2;
-    const dx = s.ringX - cx;
-    const dy = s.ringY - cy;
-    let t = Infinity;
-    if (dx !== 0) {
-      const edge = dx > 0 ? px + s.plateW : px;
-      const tt = (edge - cx) / dx;
-      if (tt > 0) t = Math.min(t, tt);
-    }
-    if (dy !== 0) {
-      const edge = dy > 0 ? py + s.plateH : py;
-      const tt = (edge - cy) / dy;
-      if (tt > 0) t = Math.min(t, tt);
-    }
-    if (!Number.isFinite(t)) return;
-    const x0 = cx + dx * t;
-    const y0 = cy + dy * t;
-    const ang = Math.atan2((cy - s.ringY) / s.ringRy, (cx - s.ringX) / s.ringRx);
-    const x1 = s.ringX + Math.cos(ang) * s.ringRx;
-    const y1 = s.ringY + Math.sin(ang) * s.ringRy;
+    const x0 = s.plateX + s.dx + s.plateW / 2;
+    const y0 = s.plateY + s.dy;
+    const x1 = s.ringX;
+    const y1 = s.ringY;
     const ctx = this.ctx;
     ctx.save();
     ctx.globalAlpha = 0.6;
