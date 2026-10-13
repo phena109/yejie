@@ -81,6 +81,9 @@ const ENEMY_GAP_MS = 460;
 /** A board tap during a player-action beat is kept only this long. */
 const PENDING_TAP_MS = 1500;
 
+/** What the board click was aiming at when it was buffered. */
+type BoardInputMode = "normal" | "move" | "skill-target" | "attack-target" | "item-target";
+
 const ROLE_LABEL: Record<Unit["role"], string> = {
   striker: "突擊",
   controller: "控制",
@@ -202,8 +205,11 @@ export class Game {
   private pendingSlot: number | null = null;
   private pendingQuit = false;
   private pendingJump: number | null = null;
-  /** Latest board tap that arrived while a player action still held `busy`. */
-  private pendingTap: { p: Vec2; at: number } | null = null;
+  /**
+   * Latest board tap that arrived while a player action still held `busy`.
+   * `mode` and `selectedId` are the UI at buffer time. The tap is dropped if either changed.
+   */
+  private pendingTap: { p: Vec2; at: number; mode: BoardInputMode; selectedId: string | null } | null = null;
 
   constructor(canvas: HTMLCanvasElement) {
     this.preloadVnPortraits();
@@ -286,6 +292,7 @@ export class Game {
     this.syncMuteBtn();
     audio.setBgm("title");
     this.refreshContinue();
+    this.installDebugHook();
   }
 
   get mission(): Mission {
@@ -766,6 +773,8 @@ export class Game {
 
   private async commitMove(dest: Vec2): Promise<void> {
     const u = this.selected;
+    // Skill, attack, and item targeting never walk. Only an open move does.
+    if (this.inputMode() !== "move" || this.phase !== "select") return;
     if (!u || !this.field || this.busy || u.movedThisTurn) return;
     const k = key(dest.x, dest.y);
     if (!this.field.cost.has(k)) return;
@@ -812,19 +821,41 @@ export class Game {
    * A tap kept in `pendingTap` is replayed from the render loop on the next
    * frame, after that frame's paint, so body stamps match the settled board.
    * A later beat that sets `busy` again (finishUnit after a move) keeps the tap.
+   * Replay drops the tap when the board mode or the selected unit changed.
    */
   private setIdle(): void {
     this.busy = false;
+  }
+
+  /** Board mode a click is interpreted in. Selection is recorded separately. */
+  private inputMode(): BoardInputMode {
+    if (this.phase === "itemAim") return "item-target";
+    if (this.phase === "skillAim") return "skill-target";
+    if (this.phase === "forecast") return this.forecast?.kind === "skill" ? "skill-target" : "attack-target";
+    if (this.phase === "select" && this.selected && !this.selected.movedThisTurn) return "move";
+    return "normal";
+  }
+
+  private selectedId(): string | null {
+    return this.selected?.id ?? null;
   }
 
   /** Replay a deferred board tap once the player phase is idle and the frame has been drawn. */
   private flushPendingTap(): void {
     const tap = this.pendingTap;
     if (!tap || this.busy) return;
-    if (performance.now() - tap.at >= PENDING_TAP_MS || !this.pendingTapReady()) {
+    if (performance.now() - tap.at >= PENDING_TAP_MS) {
       this.pendingTap = null;
       return;
     }
+    // Mode and selection are compared to the snapshot taken when the tap was buffered.
+    // A change means the click would mean something else now, so it is dropped.
+    if (tap.mode !== this.inputMode() || tap.selectedId !== this.selectedId()) {
+      this.pendingTap = null;
+      return;
+    }
+    // Pause, dialogue, or a confirm opened over the lock keeps the tap until it closes.
+    if (!this.pendingTapReady()) return;
     this.pendingTap = null;
     this.onTap(tap.p);
   }
@@ -832,7 +863,14 @@ export class Game {
   private onTap(p: Vec2): void {
     if (this.pauseOpen) return;
     if (this.busy) {
-      if (this.playable() && !this.vnOpen) this.pendingTap = { p: { x: p.x, y: p.y }, at: performance.now() };
+      if (this.playable() && !this.vnOpen) {
+        this.pendingTap = {
+          p: { x: p.x, y: p.y },
+          at: performance.now(),
+          mode: this.inputMode(),
+          selectedId: this.selectedId(),
+        };
+      }
       return;
     }
     this.pendingTap = null;
@@ -929,7 +967,13 @@ export class Game {
       }
     }
 
-    if (sel && !sel.movedThisTurn && this.moveTiles.has(key(tile.x, tile.y)) && (!u || u.id === sel.id)) {
+    if (
+      this.inputMode() === "move" &&
+      sel &&
+      !sel.movedThisTurn &&
+      this.moveTiles.has(key(tile.x, tile.y)) &&
+      (!u || u.id === sel.id)
+    ) {
       if (u && u.id === sel.id) {
         this.inspectUnit(u);
         return;
@@ -1328,6 +1372,21 @@ export class Game {
       return true;
     }
     return false;
+  }
+
+  /**
+   * Dev/test hook. Ends the current mission through the normal victory path
+   * so a run can reach 下一場 and the next briefing. Installed only in dev
+   * or when the page URL has `?debug=1`.
+   */
+  private installDebugHook(): void {
+    const params = new URLSearchParams(location.search);
+    if (!import.meta.env.DEV && params.get("debug") !== "1") return;
+    window.__yejieDebug = {
+      forceWin: () => {
+        this.win();
+      },
+    };
   }
 
   private win(): void {

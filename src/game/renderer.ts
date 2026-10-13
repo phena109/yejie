@@ -125,16 +125,12 @@ interface LabelSlot {
   text: string;
   accent: string;
   dim: boolean;
-  pri: number;
-  drawIndex: number;
-  feetY: number;
   fontPx: number;
   baseline: number;
   plateX: number;
   plateY: number;
   plateW: number;
   plateH: number;
-  barY: number;
   barW: number;
   barH: number;
   ratio: number;
@@ -553,8 +549,14 @@ const ACTED_BODY_FILTER = "saturate(0.55) brightness(0.8)";
  * at least twice this far apart. Stacking steps by one block plus this gap.
  */
 const LABEL_GAP = 3;
-/** Draw a leader when a plate leaves its default anchor by more than this. */
-const LABEL_LEADER_MIN = 6;
+/**
+ * Furthest a plate may move from the anchor above its own sprite.
+ * Screen pixels at the current zoom, not world units. Past this, plates overlap
+ * instead of drifting away from the unit.
+ */
+const LABEL_SHIFT_CAP = 24;
+/** Draw a leader once a plate has left its anchor by more than this many screen pixels. */
+const LABEL_LEADER_MIN = 8;
 const MAP_ANGLES = ["front", "ne", "right", "se", "back", "sw", "left", "nw"] as const;
 
 function unitDrawHeight(zoom: number, elite: boolean): number {
@@ -637,11 +639,13 @@ export class Renderer {
   private pointerX = 0;
   private pointerY = 0;
   private pointerInside = false;
-  private labelCount = 0;
   private placedCount = 0;
+  private statusCount = 0;
   private readonly labelPool: LabelSlot[] = [];
   private readonly labelOrder: number[] = [];
   private readonly placedRects: ScreenRect[] = [];
+  /** Status badges (the acted "E" mark and any sibling icon) from this frame. */
+  private readonly statusRects: ScreenRect[] = [];
 
   tileH(): number {
     return TILE_W * Math.sin((this.pitch * Math.PI) / 180);
@@ -798,17 +802,56 @@ export class Renderer {
   }
 
 
+  /**
+   * Painter order for tiles, props, and the units that stand on them.
+   * Depth is the screen-y of the standing point (the foot, before the shared
+   * feet drop). Higher y draws later. Ties break on screen-x, then grid position.
+   */
   private cellsInDrawOrder(map: GameMap): Vec2[] {
     const cells: Vec2[] = [];
     for (let y = 0; y < map.h; y++) {
       for (let x = 0; x < map.w; x++) cells.push({ x, y });
     }
     cells.sort((a, b) => {
-      const aa = yawPoint(a.x, a.y, this.yaw, map.w, map.h);
-      const bb = yawPoint(b.x, b.y, this.yaw, map.w, map.h);
-      return aa.x + aa.y - (bb.x + bb.y);
+      const pa = this.worldToScreen(a.x, a.y, map.heightAt(a.x, a.y));
+      const pb = this.worldToScreen(b.x, b.y, map.heightAt(b.x, b.y));
+      return this.cmpScreenDepth(pa.y, pa.x, a.y, a.x, pb.y, pb.x, b.y, b.x);
     });
     return cells;
+  }
+
+  /** Higher screen-y first in the sort result (drawn later). Then screen-x, then the tie ids. */
+  private cmpScreenDepth(
+    ay: number,
+    ax: number,
+    aId: number,
+    aId2: number,
+    by: number,
+    bx: number,
+    bId: number,
+    bId2: number,
+  ): number {
+    const dy = ay - by;
+    if (Math.abs(dy) > 0.05) return dy;
+    const dx = ax - bx;
+    if (Math.abs(dx) > 0.05) return dx;
+    if (aId !== bId) return aId - bId;
+    return aId2 - bId2;
+  }
+
+  /** Same depth key as the cell list: foot screen-y, then screen-x, then unit id. */
+  private orderUnits(list: Unit[], map: GameMap): void {
+    list.sort((a, b) => {
+      const pa = this.unitPose(a, map);
+      const pb = this.unitPose(b, map);
+      const dy = pa.feetY - pb.feetY;
+      if (Math.abs(dy) > 0.05) return dy;
+      const dx = pa.x - pb.x;
+      if (Math.abs(dx) > 0.05) return dx;
+      if (a.id < b.id) return -1;
+      if (a.id > b.id) return 1;
+      return 0;
+    });
   }
 
   hitTile(sx: number, sy: number, map: GameMap): Vec2 | null {
@@ -843,6 +886,7 @@ export class Renderer {
     for (const c of this.cellsInDrawOrder(map)) {
       const list = byTile.get(key(c.x, c.y));
       if (!list) continue;
+      this.orderUnits(list, map);
       for (const u of list) drawOrder.push(u);
     }
     return this.pickDrawnUnit(sx, sy, drawOrder, map);
@@ -1129,6 +1173,7 @@ export class Renderer {
       if (!o.gone) objAt.set(key(o.x, o.y), o);
     }
 
+    this.statusCount = 0;
     const cells = this.cellsInDrawOrder(map);
     const cellIndex = new Map<string, number>();
     for (let i = 0; i < cells.length; i++) cellIndex.set(key(cells[i].x, cells[i].y), i);
@@ -1144,6 +1189,7 @@ export class Renderer {
       // Ring and cross only: name plates are laid out in the overlay pass and a tag here would collide.
       if (downed) this.drawDownedMarker(downed, map, false);
       if (!stack) continue;
+      this.orderUnits(stack, map);
       for (const u of stack) {
         this.drawUnit(u, map, overlays);
         drawn.push(u);
@@ -2265,6 +2311,7 @@ export class Renderer {
       const ex = x + 14 * scale;
       const ey = feetY - dh + 10 * scale;
       const er = 7.2 * scale;
+      this.pushStatus(ex - er, ey - er, er * 2, er * 2);
       ctx.fillStyle = "rgba(8, 8, 14, 0.88)";
       ctx.beginPath();
       ctx.arc(ex, ey, er, 0, Math.PI * 2);
@@ -2339,16 +2386,12 @@ export class Renderer {
         text: "",
         accent: "#fff",
         dim: false,
-        pri: 2,
-        drawIndex: 0,
-        feetY: 0,
         fontPx: 9,
         baseline: 0,
         plateX: 0,
         plateY: 0,
         plateW: 0,
         plateH: 0,
-        barY: 0,
         barW: 0,
         barH: 0,
         ratio: 1,
@@ -2371,10 +2414,9 @@ export class Renderer {
     return s;
   }
 
-  /** Team rings stay on the tile centre. Each plate stays centred on its own ring and moves only vertically. */
+  /** Team rings stay on the tile centre. Each plate stays centred on its own sprite and moves only vertically. */
   private drawUnitOverlays(drawn: Unit[], map: GameMap, overlays: DrawOverlays): void {
     const n = drawn.length;
-    this.labelCount = n;
     this.placedCount = 0;
     if (n === 0) {
       this.labelRects.length = 0;
@@ -2384,9 +2426,8 @@ export class Renderer {
     const ctx = this.ctx;
     const z = this.cam.zoom;
     const fontPx = Math.max(9, 10 * z);
-    const selId = overlays.selected && !overlays.selected.dead ? overlays.selected.id : "";
-    const hovered = this.hoveredUnit(drawn, map, overlays);
-    const hovId = hovered && !hovered.dead ? hovered.id : "";
+    // Hover is tracked for hit-testing callers. It does not affect plate order or position.
+    this.hoveredUnit(drawn, map, overlays);
 
     for (let i = 0; i < n; i++) {
       const u = drawn[i];
@@ -2405,27 +2446,25 @@ export class Renderer {
       const descent = metrics.actualBoundingBoxDescent > 0 ? metrics.actualBoundingBoxDescent : fontPx * 0.22;
       const plateW = metrics.width + padX * 2;
       const plateH = ascent + descent + padY * 2;
-      const baseline = feetY + 16 * z;
-      const plateX = x - plateW / 2;
-      const plateY = baseline - ascent - padY;
       const barW = 22 * scale;
       const barH = 3.5 * scale;
-      const barY = feetY - dh - 4 * scale;
       const stamp = this.bodyStamps.get(u.id);
+      const headTop = stamp && stamp.dh > 0 ? stamp.dy : feetY - dh;
+      const lift = Math.max(2, 3 * z);
+      // Name plate sits just above the sprite. The HP bar is stacked on top of the plate.
+      const plateY = headTop - lift - plateH;
+      const baseline = plateY + padY + ascent;
+      const plateX = x - plateW / 2;
       s.id = u.id;
       s.text = text;
       s.accent = factionColor(u);
       s.dim = isPlayerControlled(u) && u.acted;
-      s.pri = u.id === selId ? 0 : u.id === hovId ? 1 : 2;
-      s.drawIndex = i;
-      s.feetY = feetY;
       s.fontPx = fontPx;
       s.baseline = baseline;
       s.plateX = plateX;
       s.plateY = plateY;
       s.plateW = plateW;
       s.plateH = plateH;
-      s.barY = barY;
       s.barW = barW;
       s.barH = barH;
       s.ratio = Math.max(0, u.hp / u.maxHp);
@@ -2455,11 +2494,13 @@ export class Renderer {
     this.labelOrder.length = n;
     for (let i = 0; i < n; i++) this.labelOrder[i] = i;
     const pool = this.labelPool;
+    // Stable per unit. Selection, hover, and acted state never change this order.
     this.labelOrder.sort((ia, ib) => {
-      const a = pool[ia];
-      const b = pool[ib];
-      if (a.pri !== b.pri) return a.pri - b.pri;
-      return b.drawIndex - a.drawIndex;
+      const a = pool[ia].id;
+      const b = pool[ib].id;
+      if (a < b) return -1;
+      if (a > b) return 1;
+      return 0;
     });
     for (let i = 0; i < n; i++) this.placeLabel(pool[this.labelOrder[i]]);
 
@@ -2496,82 +2537,45 @@ export class Renderer {
     };
   }
 
-  private rectOnCanvas(r: ScreenRect): boolean {
-    return r.x >= 0 && r.y >= 0 && r.x + r.w <= this.w && r.y + r.h <= this.h;
+  /**
+   * Anchor is above this sprite. Overlaps with plates already placed (unit-id order)
+   * and with status icons are cleared by the smallest upward shift. The shift never
+   * exceeds LABEL_SHIFT_CAP screen pixels; anything still overlapping is left overlapping.
+   */
+  private placeLabel(s: LabelSlot): void {
+    const cap = LABEL_SHIFT_CAP;
+    let oy = 0;
+    for (let step = 0; step < 8; step++) {
+      const rise = this.riseToClear(this.blockAt(s, oy, 0));
+      if (rise <= 0.25) break;
+      const next = oy - rise;
+      if (-next > cap) {
+        oy = -cap;
+        break;
+      }
+      oy = next;
+    }
+    if (oy < -cap) oy = -cap;
+    if (oy > 0) oy = 0;
+    this.commitLabel(s, 0, oy);
   }
 
   /**
-   * Plate stays on its own ring x. The block is the name plate with its HP bar directly above it.
-   * Order: under the ring, above the head, then down by one block plus 3px. When the next
-   * downward step would leave the canvas (the edge above the dock), step up above the head.
+   * Smallest upward move, in screen pixels, that separates `r` from every placed
+   * plate and status icon. Zero when nothing overlaps. Gap matches hits on both sides.
    */
-  private placeLabel(s: LabelSlot): void {
-    const gap = LABEL_GAP;
-    const blockH = s.compactH;
-    const step = blockH + gap;
-    const aboveDy = s.barY - gap - (s.plateY + s.plateH);
-    const limit = Math.max(24, this.labelCount + 8);
-
-    const accept = (oy: number): boolean => {
-      const rect = this.blockAt(s, oy, 0);
-      if (!this.rectOnCanvas(rect)) return false;
-      if (this.hitsPlaced(rect)) return false;
-      this.commitLabel(s, 0, oy);
-      return true;
+  private riseToClear(r: ScreenRect): number {
+    const g = LABEL_GAP;
+    let rise = 0;
+    const consider = (p: ScreenRect): void => {
+      if (r.x >= p.x + p.w + 2 * g || r.x + r.w + 2 * g <= p.x) return;
+      if (r.y >= p.y + p.h + 2 * g || r.y + r.h + 2 * g <= p.y) return;
+      const need = r.y + r.h + 2 * g - p.y;
+      if (need > rise) rise = need;
     };
-
-    if (accept(0)) return;
-    if (accept(aboveDy)) return;
-
-    let downLeaves = false;
-    for (let k = 1; k <= limit; k++) {
-      const oy = k * step;
-      if (this.blockAt(s, oy, 0).y + blockH > this.h) {
-        downLeaves = true;
-        break;
-      }
-      if (accept(oy)) return;
-    }
-
-    if (downLeaves) {
-      for (let j = 1; j <= limit; j++) {
-        const oy = aboveDy - j * step;
-        if (this.blockAt(s, oy, 0).y < 0) break;
-        if (accept(oy)) return;
-      }
-    }
-
-    this.commitClamped(s, aboveDy, step, limit);
-  }
-
-  /** Last resort: slide a candidate onto the canvas and keep it off every placed block. */
-  private commitClamped(s: LabelSlot, aboveDy: number, step: number, limit: number): void {
-    const oys: number[] = [0, aboveDy];
-    for (let k = 1; k <= limit; k++) {
-      oys.push(k * step);
-      oys.push(aboveDy - k * step);
-    }
-    for (const oy of oys) {
-      const fit = this.clampBlock(s, oy);
-      if (!this.rectOnCanvas(fit.rect) || this.hitsPlaced(fit.rect)) continue;
-      this.commitLabel(s, fit.ox, fit.oy);
-      return;
-    }
-    const fit = this.clampBlock(s, 0);
-    this.commitLabel(s, fit.ox, fit.oy);
-  }
-
-  private clampBlock(s: LabelSlot, oy: number): { ox: number; oy: number; rect: ScreenRect } {
-    const raw = this.blockAt(s, oy, 0);
-    let y = raw.y;
-    if (y + raw.h > this.h) y = this.h - raw.h;
-    if (y < 0) y = 0;
-    let x = raw.x;
-    if (x + raw.w > this.w) x = this.w - raw.w;
-    if (x < 0) x = 0;
-    const ox = x - raw.x;
-    const oy2 = oy + (y - raw.y);
-    return { ox, oy: oy2, rect: this.blockAt(s, oy2, ox) };
+    for (let i = 0; i < this.placedCount; i++) consider(this.placedRects[i]);
+    for (let i = 0; i < this.statusCount; i++) consider(this.statusRects[i]);
+    return rise;
   }
 
   private commitLabel(s: LabelSlot, ox: number, oy: number): void {
@@ -2594,19 +2598,17 @@ export class Renderer {
     this.placedCount++;
   }
 
-  /** True when `r` inflated by LABEL_GAP hits any placed block inflated the same way. */
-  private hitsPlaced(r: ScreenRect): boolean {
-    const g = LABEL_GAP;
-    const x = r.x - g;
-    const y = r.y - g;
-    const right = r.x + r.w + g;
-    const bottom = r.y + r.h + g;
-    const rects = this.placedRects;
-    for (let i = 0; i < this.placedCount; i++) {
-      const p = rects[i];
-      if (x < p.x + p.w + g && right > p.x - g && y < p.y + p.h + g && bottom > p.y - g) return true;
+  private pushStatus(x: number, y: number, w: number, h: number): void {
+    let r = this.statusRects[this.statusCount];
+    if (!r) {
+      r = { x: 0, y: 0, w: 0, h: 0 };
+      this.statusRects[this.statusCount] = r;
     }
-    return false;
+    r.x = x;
+    r.y = y;
+    r.w = w;
+    r.h = h;
+    this.statusCount++;
   }
 
   private paintUnitRing(s: LabelSlot): void {
@@ -2628,7 +2630,7 @@ export class Renderer {
     const ctx = this.ctx;
     const ox = s.dx;
     const oy = s.dy;
-    if (ox * ox + oy * oy > LABEL_LEADER_MIN * LABEL_LEADER_MIN) this.paintLeader(s);
+    if (Math.hypot(ox, oy) > LABEL_LEADER_MIN) this.paintLeader(s);
     ctx.save();
     // Bar sits on the plate. Same edges as blockAt, so the layout rect is the drawn block.
     const barX = s.ringX + ox - s.barW / 2;
@@ -2659,12 +2661,12 @@ export class Renderer {
     ctx.restore();
   }
 
-  /** Thin team-coloured line from the plate's top centre to this unit's ring centre. */
+  /** Thin team-coloured line from the plate's bottom centre to this unit's head. */
   private paintLeader(s: LabelSlot): void {
-    const x0 = s.plateX + s.dx + s.plateW / 2;
-    const y0 = s.plateY + s.dy;
-    const x1 = s.ringX;
-    const y1 = s.ringY;
+    const x0 = s.ringX + s.dx;
+    const y0 = s.plateY + s.dy + s.plateH;
+    const x1 = s.bodyX + s.bodyW / 2;
+    const y1 = s.bodyY;
     const ctx = this.ctx;
     ctx.save();
     ctx.globalAlpha = 0.6;
