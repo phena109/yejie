@@ -81,8 +81,10 @@ const ENEMY_GAP_MS = 460;
 /** A board tap during a player-action beat is kept only this long. */
 const PENDING_TAP_MS = 1500;
 
-/** What the board click was aiming at when it was buffered. */
+/** How a board click is interpreted. Aim modes must never be replayed as a move. */
 type BoardInputMode = "normal" | "move" | "skill-target" | "attack-target" | "item-target";
+/** Skill, attack, or item aim. Absent when the player is not choosing a target. */
+type TargetingMode = "skill-target" | "attack-target" | "item-target";
 
 const ROLE_LABEL: Record<Unit["role"], string> = {
   striker: "突擊",
@@ -207,9 +209,11 @@ export class Game {
   private pendingJump: number | null = null;
   /**
    * Latest board tap that arrived while a player action still held `busy`.
-   * `mode` and `selectedId` are the UI at buffer time. The tap is dropped if either changed.
+   * `targeting` is the aim the player was in, or null when the tap landed
+   * while an action resolved outside skill, attack, or item aim.
+   * Replay drops the tap only when that aim is no longer the board mode.
    */
-  private pendingTap: { p: Vec2; at: number; mode: BoardInputMode; selectedId: string | null } | null = null;
+  private pendingTap: { p: Vec2; at: number; targeting: TargetingMode | null } | null = null;
 
   constructor(canvas: HTMLCanvasElement) {
     this.preloadVnPortraits();
@@ -821,13 +825,14 @@ export class Game {
    * A tap kept in `pendingTap` is replayed from the render loop on the next
    * frame, after that frame's paint, so body stamps match the settled board.
    * A later beat that sets `busy` again (finishUnit after a move) keeps the tap.
-   * Replay drops the tap when the board mode or the selected unit changed.
+   * A mode or selection change made by the action itself does not drop the tap.
+   * A tap buffered in skill, attack, or item aim is dropped once that aim is gone.
    */
   private setIdle(): void {
     this.busy = false;
   }
 
-  /** Board mode a click is interpreted in. Selection is recorded separately. */
+  /** Board mode a click is interpreted in. Aim modes are not moves. */
   private inputMode(): BoardInputMode {
     if (this.phase === "itemAim") return "item-target";
     if (this.phase === "skillAim") return "skill-target";
@@ -836,8 +841,17 @@ export class Game {
     return "normal";
   }
 
-  private selectedId(): string | null {
-    return this.selected?.id ?? null;
+  /**
+   * Aim mode from the player's point of view.
+   * After 確認 the forecast panel closes, so the action lock is not aiming
+   * even while `phase` is still "forecast". Skill aim and item aim stay aiming
+   * until the phase leaves them.
+   */
+  private targetingMode(): TargetingMode | null {
+    if (this.phase === "forecast" && this.busy) return null;
+    const mode = this.inputMode();
+    if (mode === "skill-target" || mode === "attack-target" || mode === "item-target") return mode;
+    return null;
   }
 
   /** Replay a deferred board tap once the player phase is idle and the frame has been drawn. */
@@ -848,9 +862,9 @@ export class Game {
       this.pendingTap = null;
       return;
     }
-    // Mode and selection are compared to the snapshot taken when the tap was buffered.
-    // A change means the click would mean something else now, so it is dropped.
-    if (tap.mode !== this.inputMode() || tap.selectedId !== this.selectedId()) {
+    // An aim click is dropped once that aim is gone, so it cannot become a move.
+    // A tap buffered while a non-aim action resolves is applied in the current mode.
+    if (tap.targeting !== null && tap.targeting !== this.inputMode()) {
       this.pendingTap = null;
       return;
     }
@@ -867,8 +881,7 @@ export class Game {
         this.pendingTap = {
           p: { x: p.x, y: p.y },
           at: performance.now(),
-          mode: this.inputMode(),
-          selectedId: this.selectedId(),
+          targeting: this.targetingMode(),
         };
       }
       return;
