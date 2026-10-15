@@ -78,13 +78,9 @@ const VN_PORTRAIT_WAIT_MS = 1500;
 const MOVE_STEP_MS = 250;
 const ACTION_BEAT_MS = 520;
 const ENEMY_GAP_MS = 460;
-/** A board tap during a player-action beat is kept only this long. */
-const PENDING_TAP_MS = 1500;
 
-/** How a board click is interpreted. Aim modes must never be replayed as a move. */
+/** How a board click is interpreted. Aim modes are never moves. */
 type BoardInputMode = "normal" | "move" | "skill-target" | "attack-target" | "item-target";
-/** Skill, attack, or item aim. Absent when the player is not choosing a target. */
-type TargetingMode = "skill-target" | "attack-target" | "item-target";
 
 const ROLE_LABEL: Record<Unit["role"], string> = {
   striker: "突擊",
@@ -183,6 +179,7 @@ export class Game {
   private btnWait = el<HTMLButtonElement>("btn-wait");
   private btnSkill = el<HTMLButtonElement>("btn-skill");
   private btnConfirm = el<HTMLButtonElement>("btn-confirm");
+  private dockEl = el<HTMLElement>("dock");
   private btnEnd = el<HTMLButtonElement>("btn-end");
   private btnNext = el<HTMLButtonElement>("btn-next");
   private btnRotate = el<HTMLButtonElement>("btn-rotate");
@@ -207,20 +204,24 @@ export class Game {
   private pendingSlot: number | null = null;
   private pendingQuit = false;
   private pendingJump: number | null = null;
+  /** True while confirm() is running the forecast it snapshotted. */
+  private acting = false;
+  /** Bumped whenever a forecast opens, closes, or changes target. */
+  private forecastGen = 0;
+  /** Equals forecastGen only after pointerdown on 確認 for that open forecast. */
+  private confirmPressGen = -1;
   /**
-   * Latest board tap that arrived while a player action still held `busy`.
-   * `targeting` is the aim the player was in, or null when the tap landed
-   * while an action resolved outside skill, attack, or item aim.
-   * Replay drops the tap only when that aim is no longer the board mode.
+   * A tap that arrived while an animation held `busy`.
+   * Replayed only as a player-unit selection in idle select. Never a move, confirm, or aim.
    */
-  private pendingTap: { p: Vec2; at: number; targeting: TargetingMode | null } | null = null;
+  private pendingTap: { p: Vec2 } | null = null;
 
   constructor(canvas: HTMLCanvasElement) {
     this.preloadVnPortraits();
     this.renderer = new Renderer(canvas);
     precacheRigs();
     this.input = new PointerInput(canvas, this.renderer);
-    this.input.onTap = (p) => this.onTap(p);
+    this.input.onTap = (p, client) => this.onTap(p, client);
     this.map = new GameMap(this.mission.map);
     this.resetBattle();
     this.phase = "title";
@@ -234,7 +235,27 @@ export class Game {
     this.btnCancel.addEventListener("click", () => this.cancel());
     this.btnWait.addEventListener("click", () => void this.wait());
     this.btnSkill.addEventListener("click", () => this.armSkill());
-    this.btnConfirm.addEventListener("click", () => void this.confirm());
+    this.btnConfirm.addEventListener("pointerdown", (e) => {
+      if (e.button !== 0) return;
+      e.stopPropagation();
+      // Run before a canvas pointerup at this spot can dismiss the preview.
+      this.pressConfirm();
+    });
+    this.btnConfirm.addEventListener("keydown", (e) => {
+      if (e.key !== "Enter" && e.key !== " ") return;
+      if (e.repeat) return;
+      e.preventDefault();
+      e.stopPropagation();
+      this.pressConfirm();
+    });
+    this.btnConfirm.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      // detail 0 is keyboard or element.click(), which has no pointerdown.
+      // A mouse or touch click confirms only when pointerdown armed this preview,
+      // so a click that lands as the button enables cannot fire a new forecast.
+      if (e.detail === 0 || this.confirmPressGen === this.forecastGen) this.pressConfirm();
+    });
     this.btnEnd.addEventListener("click", () => void this.endTurn());
     this.btnRotate.addEventListener("click", () => this.rotateMap());
     this.btnPause.addEventListener("click", () => this.openPause());
@@ -612,6 +633,7 @@ export class Game {
     this.clearSel();
     this.inspect = null;
     this.busy = false;
+    this.acting = false;
     this.clearPendingTap();
     this.loseKind = "wipe";
     this.pendingItem = null;
@@ -704,6 +726,7 @@ export class Game {
     this.areaKind = null;
     this.forecast = null;
     this.pendingItem = null;
+    this.bumpForecast();
   }
 
   private locked(): boolean {
@@ -717,6 +740,7 @@ export class Game {
     this.selected = u;
     if (!u.movedThisTurn) this.origin = null;
     this.forecast = null;
+    this.clearPendingTap();
     this.inspect = null;
     this.pendingItem = null;
     this.showCommand(u);
@@ -766,6 +790,8 @@ export class Game {
   }
 
   private showCommand(u: Unit): void {
+    this.forecast = null;
+    this.bumpForecast();
     this.refreshRanges(u);
     this.phase = "select";
     const bits: string[] = [];
@@ -815,19 +841,35 @@ export class Game {
     this.pendingTap = null;
   }
 
-  /** True when a deferred board tap may still land on the player phase. */
+  /** Invalidate any armed 確認. The open forecast, if any, now needs a new press. */
+  private bumpForecast(): void {
+    this.forecastGen += 1;
+    this.confirmPressGen = -1;
+  }
+
+  /** Commit the open preview. A press that does not match this preview does nothing. */
+  private pressConfirm(): void {
+    if (this.btnConfirm.disabled || this.phase !== "forecast" || !this.forecast || this.busy || this.acting) return;
+    this.confirmPressGen = this.forecastGen;
+    void this.confirm();
+  }
+
+  private openForecast(f: Forecast): void {
+    this.forecast = f;
+    this.phase = "forecast";
+    this.bumpForecast();
+    this.clearPendingTap();
+    this.log = f.detail;
+    this.inspect = null;
+    this.syncUi();
+  }
+
+  /** True when a deferred selection tap may still land on the player phase. */
   private pendingTapReady(): boolean {
     return this.playable() && !this.pauseOpen && !this.vnOpen && this.modalKind === "off" && this.confirmEl.hidden;
   }
 
-  /**
-   * Release the lock after a player action.
-   * A tap kept in `pendingTap` is replayed from the render loop on the next
-   * frame, after that frame's paint, so body stamps match the settled board.
-   * A later beat that sets `busy` again (finishUnit after a move) keeps the tap.
-   * A mode or selection change made by the action itself does not drop the tap.
-   * A tap buffered in skill, attack, or item aim is dropped once that aim is gone.
-   */
+  /** Animation lock is over. The next click is handled live; there is no extra cooldown. */
   private setIdle(): void {
     this.busy = false;
   }
@@ -836,54 +878,78 @@ export class Game {
   private inputMode(): BoardInputMode {
     if (this.phase === "itemAim") return "item-target";
     if (this.phase === "skillAim") return "skill-target";
-    if (this.phase === "forecast") return this.forecast?.kind === "skill" ? "skill-target" : "attack-target";
+    if (this.phase === "forecast" && this.forecast) {
+      return this.forecast.kind === "skill" ? "skill-target" : "attack-target";
+    }
     if (this.phase === "select" && this.selected && !this.selected.movedThisTurn) return "move";
     return "normal";
   }
 
-  /**
-   * Aim mode from the player's point of view.
-   * After 確認 the forecast panel closes, so the action lock is not aiming
-   * even while `phase` is still "forecast". Skill aim and item aim stay aiming
-   * until the phase leaves them.
-   */
-  private targetingMode(): TargetingMode | null {
-    if (this.phase === "forecast" && this.busy) return null;
-    const mode = this.inputMode();
-    if (mode === "skill-target" || mode === "attack-target" || mode === "item-target") return mode;
-    return null;
+  private pointInEl(client: Vec2, node: HTMLElement): boolean {
+    const r = node.getBoundingClientRect();
+    if (r.width <= 0 || r.height <= 0) return false;
+    return client.x >= r.left && client.x < r.right && client.y >= r.top && client.y < r.bottom;
   }
 
-  /** Replay a deferred board tap once the player phase is idle and the frame has been drawn. */
+  /** HUD controls that must not fall through to the board when a captured pointer releases on them. */
+  private releaseHitsHud(client: Vec2): boolean {
+    const nodes = [this.dockEl, this.btnCancel, this.btnWait, this.btnSkill, this.btnEnd, this.btnRotate, this.btnBag, this.btnPause];
+    for (const node of nodes) {
+      if (this.pointInEl(client, node)) return true;
+    }
+    return !this.forecastEl.hidden && this.pointInEl(client, this.forecastEl);
+  }
+
+  /**
+   * Remember a busy-tap only when it would select a living player unit in idle select.
+   * Aim, forecast, and preview taps are dropped. A kept tap only selects a unit.
+   */
+  private noteSelectTap(p: Vec2): void {
+    this.pendingTap = null;
+    if (!this.playable() || this.vnOpen || this.pauseOpen) return;
+    if (this.phase !== "select") return;
+    const mode = this.inputMode();
+    if (mode === "skill-target" || mode === "attack-target" || mode === "item-target") return;
+    const unit = this.renderer.hitUnit(p.x, p.y, this.map, this.units);
+    if (!unit || unit.dead || unit.team !== "player" || unit.npc || unit.acted) return;
+    if (this.selected && this.locked() && this.selected.id !== unit.id) return;
+    this.pendingTap = { p: { x: p.x, y: p.y } };
+  }
+
+  /** Replay a deferred tap as a unit selection only. Never as a move, aim, or confirm. */
   private flushPendingTap(): void {
     const tap = this.pendingTap;
-    if (!tap || this.busy) return;
-    if (performance.now() - tap.at >= PENDING_TAP_MS) {
-      this.pendingTap = null;
+    if (!tap || this.busy || this.acting) return;
+    if (this.phase !== "select" || !this.pendingTapReady()) {
+      if (this.phase !== "select" && this.pendingTapReady()) this.pendingTap = null;
       return;
     }
-    // An aim click is dropped once that aim is gone, so it cannot become a move.
-    // A tap buffered while a non-aim action resolves is applied in the current mode.
-    if (tap.targeting !== null && tap.targeting !== this.inputMode()) {
-      this.pendingTap = null;
-      return;
-    }
-    // Pause, dialogue, or a confirm opened over the lock keeps the tap until it closes.
-    if (!this.pendingTapReady()) return;
     this.pendingTap = null;
-    this.onTap(tap.p);
+    const unit = this.renderer.hitUnit(tap.p.x, tap.p.y, this.map, this.units);
+    if (!unit || unit.dead || unit.team !== "player" || unit.npc || unit.acted) return;
+    if (this.selected && this.locked() && this.selected.id !== unit.id) return;
+    this.selectUnit(unit);
   }
 
-  private onTap(p: Vec2): void {
-    if (this.pauseOpen) return;
-    if (this.busy) {
-      if (this.playable() && !this.vnOpen) {
-        this.pendingTap = {
-          p: { x: p.x, y: p.y },
-          at: performance.now(),
-          targeting: this.targetingMode(),
-        };
-      }
+  private onTap(p: Vec2, client: Vec2): void {
+    if (this.pauseOpen || this.vnOpen) return;
+    // 確認 is consumed here and must not also dismiss or retarget.
+    if (this.pointInEl(client, this.btnConfirm)) {
+      this.pressConfirm();
+      return;
+    }
+    if (this.releaseHitsHud(client)) return;
+    // This open preview was already armed. Do not dismiss it on the same press.
+    if (
+      this.phase === "forecast" &&
+      this.forecast &&
+      this.forecastGen > 0 &&
+      this.confirmPressGen === this.forecastGen
+    ) {
+      return;
+    }
+    if (this.busy || this.acting) {
+      this.noteSelectTap(p);
       return;
     }
     this.pendingTap = null;
@@ -906,7 +972,8 @@ export class Game {
     const unit = pickUnit ? this.renderer.hitUnit(p.x, p.y, this.map, this.units) : null;
     const tile = unit ? { x: unit.x, y: unit.y } : this.renderer.hitTile(p.x, p.y, this.map);
     if (this.phase === "forecast") {
-      if (!tile || (this.forecast && (tile.x !== this.forecast.target.x || tile.y !== this.forecast.target.y))) {
+      // Dismiss only. Never execute, and never retarget in this same tap.
+      if (!tile || !this.forecast || tile.x !== this.forecast.target.x || tile.y !== this.forecast.target.y) {
         this.backFromForecast();
       }
       return;
@@ -941,16 +1008,12 @@ export class Game {
     const obj = this.map.objAt(tile.x, tile.y);
 
     if (sel && !sel.actedThisTurn && u && this.actionTiles.has(key(u.x, u.y))) {
-      this.forecast = makeAttackForecast(sel, u, this.map);
-      this.phase = "forecast";
-      this.log = this.forecast.detail;
-      this.inspect = null;
-      this.syncUi();
+      this.openForecast(makeAttackForecast(sel, u, this.map));
       return;
     }
 
     if (sel && !sel.actedThisTurn && obj && !obj.gone && obj.kind === "destructible" && this.actionTiles.has(key(obj.x, obj.y))) {
-      this.forecast = {
+      this.openForecast({
         kind: "object",
         actor: sel,
         target: sel,
@@ -961,11 +1024,7 @@ export class Game {
         skip: false,
         face: "front",
         objectId: obj.id,
-      };
-      this.phase = "forecast";
-      this.log = this.forecast.detail;
-      this.inspect = null;
-      this.syncUi();
+      });
       return;
     }
 
@@ -1037,10 +1096,7 @@ export class Game {
       this.backFromSkill();
       return;
     }
-    this.forecast = makeSkillForecast(actor, t, this.map);
-    this.phase = "forecast";
-    this.log = this.forecast.detail;
-    this.syncUi();
+    this.openForecast(makeSkillForecast(actor, t, this.map));
   }
 
   private tryItemTarget(tile: Vec2): void {
@@ -1054,26 +1110,41 @@ export class Game {
   }
 
   private backFromForecast(): void {
-    if (!this.selected) return;
-    if (this.skillTiles.size && this.forecast?.kind === "skill") {
-      this.forecast = null;
+    const skill = !!this.selected && this.skillTiles.size > 0 && this.forecast?.kind === "skill";
+    this.forecast = null;
+    this.bumpForecast();
+    this.clearPendingTap();
+    if (!this.selected) {
+      this.phase = "select";
+      this.syncUi();
+      return;
+    }
+    if (skill) {
       this.phase = "skillAim";
       this.syncUi();
       return;
     }
-    this.forecast = null;
     this.showCommand(this.selected);
   }
 
   private backFromSkill(): void {
     this.skillTiles.clear();
     this.forecast = null;
+    this.bumpForecast();
+    this.clearPendingTap();
     if (this.selected) this.showCommand(this.selected);
+    else {
+      this.phase = "select";
+      this.syncUi();
+    }
   }
 
   private backFromItem(): void {
     this.pendingItem = null;
     this.skillTiles.clear();
+    this.forecast = null;
+    this.bumpForecast();
+    this.clearPendingTap();
     if (this.selected) this.showCommand(this.selected);
     else {
       this.phase = "select";
@@ -1083,6 +1154,7 @@ export class Game {
 
   cancel(): void {
     if (this.busy) return;
+    this.clearPendingTap();
     if (this.phase === "forecast") {
       this.backFromForecast();
       return;
@@ -1127,6 +1199,8 @@ export class Game {
     this.actionTiles.clear();
     this.moveTiles.clear();
     this.forecast = null;
+    this.bumpForecast();
+    this.clearPendingTap();
     this.inspect = null;
     this.phase = "skillAim";
     this.log = u.skillHint;
@@ -1140,15 +1214,20 @@ export class Game {
   }
 
   async confirm(): Promise<void> {
-    if (this.phase !== "forecast" || !this.forecast || this.busy) return;
+    if (this.phase !== "forecast" || !this.forecast || this.busy || this.acting) return;
     const f = this.forecast;
+    this.acting = true;
     this.busy = true;
+    this.clearPendingTap();
     // The preview panel closes the moment the action is committed.
     this.syncUi();
     const actor = f.actor;
     if (f.kind === "object" && f.objectId) {
       const obj = this.map.objects.find((o) => o.id === f.objectId);
       if (!obj || obj.gone) {
+        this.acting = false;
+        this.forecast = null;
+        this.bumpForecast();
         this.setIdle();
         this.showCommand(actor);
         return;
@@ -1173,13 +1252,15 @@ export class Game {
       actor.lunge = 0;
       actor.anim = "idle";
       await this.waitMs(ACTION_BEAT_MS);
+      this.forecast = null;
+      this.bumpForecast();
+      this.acting = false;
       this.setIdle();
       if (this.checkEnd()) return;
       if (actor.movedThisTurn) {
         await this.finishUnit();
         return;
       }
-      this.forecast = null;
       this.showCommand(actor);
       this.autosave();
       return;
@@ -1224,14 +1305,16 @@ export class Game {
     actor.lunge = 0;
     actor.anim = "idle";
     await this.waitMs(ACTION_BEAT_MS);
+    this.forecast = null;
+    this.skillTiles.clear();
+    this.bumpForecast();
+    this.acting = false;
     this.setIdle();
     if (this.checkEnd()) return;
     if (actor.movedThisTurn) {
       await this.finishUnit();
       return;
     }
-    this.forecast = null;
-    this.skillTiles.clear();
     this.showCommand(actor);
     this.autosave();
   }
@@ -1810,6 +1893,7 @@ export class Game {
     this.closeModal();
     this.inspect = null;
     this.forecast = null;
+    this.bumpForecast();
     this.moveTiles.clear();
     this.actionTiles.clear();
     this.areaTiles.clear();
@@ -2028,6 +2112,7 @@ export class Game {
     this.clearSel();
     this.inspect = null;
     this.busy = false;
+    this.acting = false;
     this.clearPendingTap();
     this.pendingItem = null;
     this.fillBriefing();
@@ -2191,7 +2276,7 @@ export class Game {
       this.busy ||
       (this.phase !== "select" && this.phase !== "skillAim");
     this.btnSkill.classList.toggle("armed", this.phase === "skillAim");
-    this.btnConfirm.disabled = this.phase !== "forecast" || this.busy;
+    this.btnConfirm.disabled = this.phase !== "forecast" || this.busy || this.acting || !this.forecast;
     const leftover = this.units.some((x) => x.team === "player" && !x.dead && !x.acted && !x.npc);
     const hideChrome =
       this.phase === "enemy" ||

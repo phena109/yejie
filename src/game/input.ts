@@ -11,7 +11,7 @@ export class PointerInput {
   private moved = 0;
   private right = false;
   private pinchGrid: { x: number; y: number } | null = null;
-  onTap: (p: Vec2) => void = () => {};
+  onTap: (p: Vec2, client: Vec2) => void = () => {};
 
   constructor(
     private canvas: HTMLCanvasElement,
@@ -124,7 +124,7 @@ export class PointerInput {
       this.lastCentroid = null;
     }
     if (this.pointers.size === 0) {
-      if (!this.dragging && this.start && p) this.onTap(p);
+      if (!this.dragging && this.start && p) this.onTap(p, { x: e.clientX, y: e.clientY });
       this.start = null;
       this.dragging = false;
       this.moved = 0;
