@@ -854,14 +854,44 @@ export class Renderer {
     });
   }
 
+  /**
+   * Tile whose top-face diamond contains the screen point.
+   * Tiles are tested front to back on the ground plane (the same projection as
+   * worldToScreen, with height left out of the depth). The first hit wins, so a
+   * raised tile beats the lower tiles behind it that its top covers. Side faces
+   * are not pickable.
+   */
   hitTile(sx: number, sy: number, map: GameMap): Vec2 | null {
     this.syncMap(map);
-    let hit: Vec2 | null = null;
-    for (const c of this.cellsInDrawOrder(map)) {
-      const t = map.tiles[c.y][c.x];
-      if (this.hitPrism(sx, sy, t)) hit = c;
+    const cells: Vec2[] = [];
+    for (let y = 0; y < map.h; y++) {
+      for (let x = 0; x < map.w; x++) cells.push({ x, y });
     }
-    return hit;
+    cells.sort((a, b) => {
+      const pa = this.worldToScreen(a.x, a.y, 0);
+      const pb = this.worldToScreen(b.x, b.y, 0);
+      return this.cmpScreenDepth(pb.y, pb.x, b.y, b.x, pa.y, pa.x, a.y, a.x);
+    });
+    for (const c of cells) {
+      const t = map.tiles[c.y][c.x];
+      if (this.hitTop(sx, sy, t.x, t.y, t.h)) return { x: c.x, y: c.y };
+    }
+    return null;
+  }
+
+  /** Viewport point to a tile, using the same pick as a board click. */
+  tileAtScreen(clientX: number, clientY: number, map: GameMap): Vec2 | null {
+    const r = this.canvas.getBoundingClientRect();
+    return this.hitTile(clientX - r.left, clientY - r.top, map);
+  }
+
+  /** Viewport point of a tile's top-face centre. */
+  screenOfTile(x: number, y: number, map: GameMap): Vec2 {
+    this.syncMap(map);
+    const t = map.tile(x, y);
+    const p = this.worldToScreen(x, y, t ? t.h : 0);
+    const r = this.canvas.getBoundingClientRect();
+    return { x: p.x + r.left, y: p.y + r.top };
   }
 
   /**
@@ -1061,13 +1091,9 @@ export class Renderer {
     return this.alphaReadCtx;
   }
 
-  private hitPrism(sx: number, sy: number, t: Tile): boolean {
-    const { drop, top } = this.topMetrics(t.x, t.y, t.h);
-    if (pointInQuad(sx, sy, top[0], top[1], top[2], top[3])) return true;
-    for (const [a, b, c, d] of this.frontFaces(top, drop)) {
-      if (pointInQuad(sx, sy, a, b, c, d)) return true;
-    }
-    return false;
+  private hitTop(sx: number, sy: number, x: number, y: number, h: number): boolean {
+    const top = this.topCorners(x, y, h);
+    return pointInQuad(sx, sy, top[0], top[1], top[2], top[3]);
   }
 
   rotate(map: GameMap): void {

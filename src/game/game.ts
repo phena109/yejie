@@ -1482,6 +1482,8 @@ export class Game {
       forceWin: () => {
         this.win();
       },
+      tileAtScreen: (clientX, clientY) => this.renderer.tileAtScreen(clientX, clientY, this.map),
+      screenOfTile: (x, y) => this.renderer.screenOfTile(x, y, this.map),
     };
   }
 
