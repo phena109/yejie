@@ -298,6 +298,9 @@ export class Game {
       }
       if (this.vnOpen) return;
       if (!this.title.hidden || !this.briefing.hidden) return;
+      if (!this.playable()) return;
+      e.preventDefault();
+      this.cancel();
     });
     document.querySelectorAll<HTMLButtonElement>("[data-test-mission]").forEach((button) => {
       button.addEventListener("click", () => this.jumpToMission(Number(button.dataset.testMission)));
@@ -925,8 +928,31 @@ export class Game {
   }
 
   /**
+   * Pointer is on the unit that is already selected.
+   * The stamp box counts, so transparent padding is not the tile behind the sprite.
+   * A different unit's tile under that padding is left to the normal tap.
+   */
+  private tapOnSelected(p: Vec2, hit: Unit | null): boolean {
+    const sel = this.selected;
+    if (!sel || sel.dead) return false;
+    if (hit) return hit.id === sel.id;
+    const stamp = this.renderer.bodyStamps.get(sel.id);
+    if (!stamp || !(stamp.dw > 0) || !(stamp.dh > 0)) return false;
+    // One pixel of slop: a click on the stamp edge can land just outside after rounding.
+    const slop = 1;
+    if (p.x < stamp.dx - slop || p.y < stamp.dy - slop || p.x > stamp.dx + stamp.dw + slop || p.y > stamp.dy + stamp.dh + slop) return false;
+    const tile = this.renderer.hitTile(p.x, p.y, this.map);
+    if (!tile) return true;
+    const occ = this.unitAt(tile.x, tile.y);
+    if (occ) return occ.id === sel.id;
+    const under = this.map.objAt(tile.x, tile.y);
+    return !under || under.gone;
+  }
+
+  /**
    * Replay a deferred tap as a unit selection only, on the first idle select frame.
    * Never a move, skill target, or confirm. skillAim and forecast never replay.
+   * A replay on the unit that is already selected does not toggle it off.
    */
   private flushPendingTap(): void {
     const tap = this.pendingTap;
@@ -937,6 +963,11 @@ export class Game {
     }
     this.pendingTap = null;
     const unit = this.renderer.hitUnit(tap.p.x, tap.p.y, this.map, this.units);
+    const kept = this.selected;
+    if (kept && this.tapOnSelected(tap.p, unit)) {
+      this.refreshRanges(kept);
+      return;
+    }
     if (!unit || unit.dead || unit.team !== "player" || unit.npc || unit.acted) return;
     if (this.selected && this.locked() && this.selected.id !== unit.id) return;
     this.selectUnit(unit);
@@ -1052,6 +1083,12 @@ export class Game {
       }
     }
 
+    // Re-click keeps the selection. Esc and an empty tile clear it.
+    if (sel && (this.tapOnSelected(p, unit) || (!unit && u?.id === sel.id))) {
+      this.refreshRanges(sel);
+      return;
+    }
+
     if (
       this.inputMode() === "move" &&
       sel &&
@@ -1077,7 +1114,11 @@ export class Game {
 
     if (u) this.inspectUnit(u);
     else if (obj && !obj.gone) this.inspectObject(obj.id);
-    else this.inspectTile(this.map.tile(tile.x, tile.y)!);
+    else if (sel && !this.locked()) {
+      this.inspect = null;
+      this.clearSel();
+      this.syncUi();
+    } else this.inspectTile(this.map.tile(tile.x, tile.y)!);
   }
 
   private inspectUnit(u: Unit): void {
