@@ -154,6 +154,33 @@ function rectsOverlap(a: ScreenRect, b: ScreenRect): boolean {
   return a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
 }
 
+function overlapArea(a: ScreenRect, b: ScreenRect): number {
+  const w = Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x);
+  const h = Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y);
+  if (w <= 0 || h <= 0) return 0;
+  return w * h;
+}
+
+/** True when `a` and `b` stay at least `gap` screen pixels apart on one axis. */
+function separatedBy(a: ScreenRect, b: ScreenRect, gap: number): boolean {
+  return (
+    a.x + a.w + gap <= b.x ||
+    b.x + b.w + gap <= a.x ||
+    a.y + a.h + gap <= b.y ||
+    b.y + b.h + gap <= a.y
+  );
+}
+
+/** Acted "E" badge. `homeX`/`homeY` is the mark on the sprite; layout may slide it. */
+interface StatusMark {
+  owner: string;
+  r: number;
+  z: number;
+  scale: number;
+  homeX: number;
+  homeY: number;
+}
+
 function rectHasPoint(r: ScreenRect, x: number, y: number): boolean {
   return x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h;
 }
@@ -543,18 +570,12 @@ const GHOST_ALPHA = 0.45;
  */
 const ACTED_BODY_ALPHA = 0.78;
 const ACTED_BODY_FILTER = "saturate(0.55) brightness(0.8)";
-/**
- * Clear space around a plate+HP block. Collision inflates every placed block
- * and the candidate by this many pixels on each side, so the drawn rects stay
- * at least twice this far apart. Stacking steps by one block plus this gap.
- */
-const LABEL_GAP = 3;
-/**
- * Furthest a plate may move from the anchor above its own sprite.
- * Screen pixels at the current zoom, not world units. Past this, plates overlap
- * instead of drifting away from the unit.
- */
-const LABEL_SHIFT_CAP = 24;
+/** Screen pixels kept between plate blocks, and between a plate and an E icon. */
+const LABEL_GAP = 1;
+/** Plate centre stays within this many screen pixels of its unit. Tried before any lift. */
+const LABEL_NUDGE_CAP = 24;
+/** Extra lift above the anchor, in screen pixels. An E icon moves aside instead of lifting past this. */
+const LABEL_LIFT_CAP = 20;
 /** Draw a leader once a plate has left its anchor by more than this many screen pixels. */
 const LABEL_LEADER_MIN = 8;
 const MAP_ANGLES = ["front", "ne", "right", "se", "back", "sw", "left", "nw"] as const;
@@ -641,16 +662,20 @@ export class Renderer {
   private pointerInside = false;
   private placedCount = 0;
   private statusCount = 0;
+  /** Living units passed to the current overlay pass. Slots past this are stale. */
+  private overlayCount = 0;
   private readonly labelPool: LabelSlot[] = [];
   private readonly labelOrder: number[] = [];
   private readonly placedRects: ScreenRect[] = [];
   /** Status badges (the acted "E" mark and any sibling icon) from this frame. */
   private readonly statusRects: ScreenRect[] = [];
+  private readonly statusMarks: StatusMark[] = [];
   /**
    * Plate shift (dx, dy) last committed for each unit, plus the tile it was solved on.
    * The shift is relative to that unit's own sprite (itself anchored at worldToScreen).
    * It stays put until that unit changes tile, or the frozen rect would overlap another
-   * plate or an E icon. A neighbour moving yields; this plate is not pushed aside.
+   * plate. A neighbour moving yields; this plate is not pushed aside. E icons slide
+   * off a plate instead of pushing it.
    */
   private readonly labelHold = new Map<string, { dx: number; dy: number; x: number; y: number }>();
   private readonly labelSeen = new Set<string>();
@@ -2342,23 +2367,11 @@ export class Renderer {
     ctx.restore();
 
     if (done) {
+      // Drawn after plates so a crowded badge can sit beside its own name.
       const ex = x + 14 * scale;
       const ey = feetY - dh + 10 * scale;
       const er = 7.2 * scale;
-      this.pushStatus(ex - er, ey - er, er * 2, er * 2);
-      ctx.fillStyle = "rgba(8, 8, 14, 0.88)";
-      ctx.beginPath();
-      ctx.arc(ex, ey, er, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.strokeStyle = "rgba(220, 224, 232, 0.92)";
-      ctx.lineWidth = Math.max(1, 1.15 * z);
-      ctx.stroke();
-      ctx.fillStyle = "#e8eef2";
-      ctx.font = `bold ${Math.max(9, 11 * z)}px sans-serif`;
-      ctx.textAlign = "center";
-      ctx.textBaseline = "middle";
-      ctx.fillText("E", ex, ey + 0.4 * scale);
-      ctx.textBaseline = "alphabetic";
+      this.pushStatus(u.id, ex, ey, er, z, scale);
     }
   }
 
@@ -2448,9 +2461,10 @@ export class Renderer {
     return s;
   }
 
-  /** Team rings stay on the tile centre. Each plate stays centred on its own sprite and moves only vertically. */
+  /** Team rings stay on the tile centre. Plates nudge sideways before they lift. */
   private drawUnitOverlays(drawn: Unit[], map: GameMap, overlays: DrawOverlays): void {
     const n = drawn.length;
+    this.overlayCount = n;
     this.placedCount = 0;
     if (n === 0) {
       this.labelRects.length = 0;
@@ -2555,6 +2569,7 @@ export class Renderer {
       this.holdLabel(pool[i], prev.dx, prev.dy);
     }
     for (const i of dirty) this.placeLabel(pool[i]);
+    this.settleStatusIcons();
     for (let k = 0; k < n; k++) {
       const i = this.labelOrder[k];
       const s = pool[i];
@@ -2570,6 +2585,7 @@ export class Renderer {
 
     for (let i = 0; i < n; i++) this.paintUnitRing(pool[i]);
     for (let i = 0; i < n; i++) this.paintUnitLabel(pool[i]);
+    this.paintStatusIcons();
 
     if (this.labelRects.length > n) this.labelRects.length = n;
     for (let i = 0; i < n; i++) {
@@ -2602,85 +2618,188 @@ export class Renderer {
   }
 
   /**
-   * Anchor is above this sprite. Overlaps with plates already placed and with
-   * status icons are cleared by the smallest upward shift. The shift never
-   * exceeds LABEL_SHIFT_CAP screen pixels; anything still overlapping is left overlapping.
+   * Anchor is above this sprite. A sideways nudge (centre within LABEL_NUDGE_CAP)
+   * is tried before any lift, and the lift stays within LABEL_LIFT_CAP.
+   * E icons are obstacles when that costs no extra lift; otherwise they move aside.
    */
   private placeLabel(s: LabelSlot): void {
-    this.placeLabelFrom(s, 0, 0);
-  }
-
-  /** Fresh stack from the anchor. Used when this unit itself changed tile. */
-  private placeLabelFrom(s: LabelSlot, ox: number, oy: number): void {
-    const cap = LABEL_SHIFT_CAP;
-    for (let step = 0; step < 8; step++) {
-      const rise = this.riseToClear(this.blockAt(s, oy, ox));
-      if (rise <= 0.25) break;
-      const next = oy - rise;
-      if (-next > cap) {
-        oy = -cap;
-        break;
-      }
-      oy = next;
-    }
-    if (oy < -cap) oy = -cap;
-    if (oy > 0) oy = 0;
-    this.commitLabel(s, ox, oy);
+    const next = this.resolveLabel(s);
+    this.commitLabel(s, next.ox, next.oy);
   }
 
   /**
-   * Frozen shift. Stays exact when the drawn rect misses every plate and E icon
-   * already placed. An intersection with something underneath lifts by that
-   * overlap only. A plate already above this one is not leapt over: that jump
-   * is what slid an unrelated name after the mover had settled.
+   * Frozen shift. Kept exactly while it misses plates already placed, so a
+   * neighbour's move cannot slide this name. Overlap with an E icon is left
+   * for the icon to step aside. A real plate hit is re-solved like a fresh label.
    */
   private holdLabel(s: LabelSlot, ox: number, oy: number): void {
-    const cap = LABEL_SHIFT_CAP;
-    for (let step = 0; step < 8; step++) {
-      const rise = this.riseOffLower(this.blockAt(s, oy, ox));
-      if (rise <= 0.25) break;
-      const next = oy - rise;
-      if (-next > cap) {
-        oy = -cap;
-        break;
-      }
-      oy = next;
+    if (this.plateOverlap(s, ox, oy) <= 0) {
+      this.commitLabel(s, ox, oy);
+      return;
     }
-    if (oy < -cap) oy = -cap;
-    if (oy > 0) oy = 0;
-    this.commitLabel(s, ox, oy);
+    const next = this.resolveLabel(s);
+    this.commitLabel(s, next.ox, next.oy);
   }
 
-  /** Lift so `r` clears intersecting plates and icons whose top is not above `r`. */
-  private riseOffLower(r: ScreenRect): number {
-    let rise = 0;
-    const consider = (p: ScreenRect): void => {
-      if (!rectsOverlap(r, p)) return;
-      if (p.y < r.y) return;
-      const need = r.y + r.h - p.y;
-      if (need > rise) rise = need;
-    };
-    for (let i = 0; i < this.placedCount; i++) consider(this.placedRects[i]);
-    for (let i = 0; i < this.statusCount; i++) consider(this.statusRects[i]);
-    return rise;
+  /** Prefer a slot that also misses E icons when it does not lift any further. */
+  private resolveLabel(s: LabelSlot): { ox: number; oy: number } {
+    const plates = this.seekLabel(s, false);
+    const both = this.seekLabel(s, true);
+    if (both && (!plates || -both.oy <= -plates.oy)) return both;
+    if (plates) return plates;
+    return this.leastLabel(s);
   }
 
-  /**
-   * Smallest upward move, in screen pixels, that separates `r` from every placed
-   * plate and status icon. Zero when nothing overlaps. Gap matches hits on both sides.
-   */
-  private riseToClear(r: ScreenRect): number {
-    const g = LABEL_GAP;
-    let rise = 0;
-    const consider = (p: ScreenRect): void => {
-      if (r.x >= p.x + p.w + 2 * g || r.x + r.w + 2 * g <= p.x) return;
-      if (r.y >= p.y + p.h + 2 * g || r.y + r.h + 2 * g <= p.y) return;
-      const need = r.y + r.h + 2 * g - p.y;
-      if (need > rise) rise = need;
+  /** Smallest lift, then smallest sideways slide, that clears placed plates and maybe icons. */
+  private seekLabel(s: LabelSlot, icons: boolean): { ox: number; oy: number } | null {
+    for (let lift = 0; lift <= LABEL_LIFT_CAP; lift++) {
+      const oy = -lift;
+      for (let side = 0; side <= LABEL_NUDGE_CAP; side++) {
+        if (this.labelClear(s, side, oy, icons)) return { ox: side, oy };
+        if (side !== 0 && this.labelClear(s, -side, oy, icons)) return { ox: -side, oy };
+      }
+    }
+    return null;
+  }
+
+  /** Inside the caps, the offset with the least plate-on-plate area. */
+  private leastLabel(s: LabelSlot): { ox: number; oy: number } {
+    let ox = 0;
+    let oy = 0;
+    let best = Number.POSITIVE_INFINITY;
+    let bestLift = LABEL_LIFT_CAP + 1;
+    let bestSide = LABEL_NUDGE_CAP + 1;
+    for (let lift = 0; lift <= LABEL_LIFT_CAP; lift++) {
+      for (let side = 0; side <= LABEL_NUDGE_CAP; side++) {
+        const xs = side === 0 ? [0] : [side, -side];
+        for (const x of xs) {
+          const area = this.plateOverlap(s, x, -lift);
+          if (
+            area < best - 1e-6 ||
+            (Math.abs(area - best) <= 1e-6 && (lift < bestLift || (lift === bestLift && side < bestSide)))
+          ) {
+            best = area;
+            bestLift = lift;
+            bestSide = side;
+            ox = x;
+            oy = -lift;
+          }
+        }
+      }
+    }
+    return { ox, oy };
+  }
+
+  private labelClear(s: LabelSlot, ox: number, oy: number, icons: boolean): boolean {
+    const r = this.blockAt(s, oy, ox);
+    for (let i = 0; i < this.placedCount; i++) {
+      if (!separatedBy(r, this.placedRects[i], LABEL_GAP)) return false;
+    }
+    if (!icons) return true;
+    for (let i = 0; i < this.statusCount; i++) {
+      if (!separatedBy(r, this.statusRects[i], LABEL_GAP)) return false;
+    }
+    return true;
+  }
+
+  private plateOverlap(s: LabelSlot, ox: number, oy: number): number {
+    const r = this.blockAt(s, oy, ox);
+    let area = 0;
+    for (let i = 0; i < this.placedCount; i++) area += overlapArea(r, this.placedRects[i]);
+    return area;
+  }
+
+  /** Slide an E icon off any plate. The home mark wins when it is already clear. */
+  private settleStatusIcons(): void {
+    for (let i = 0; i < this.statusCount; i++) {
+      const mark = this.statusMarks[i];
+      const rect = this.statusRects[i];
+      if (this.iconClear(rect, i, 0)) continue;
+      const spot = this.iconSpot(mark, i);
+      if (!spot) continue;
+      rect.x = spot.x - mark.r;
+      rect.y = spot.y - mark.r;
+    }
+  }
+
+  private iconClear(rect: ScreenRect, index: number, gap: number): boolean {
+    for (let i = 0; i < this.placedCount; i++) {
+      if (!separatedBy(this.placedRects[i], rect, gap)) return false;
+    }
+    for (let i = 0; i < index; i++) {
+      if (!separatedBy(this.statusRects[i], rect, gap)) return false;
+    }
+    return true;
+  }
+
+  private iconSpot(mark: StatusMark, index: number): { x: number; y: number } | null {
+    const r = mark.r;
+    let bestX = 0;
+    let bestY = 0;
+    let bestD = Number.POSITIVE_INFINITY;
+    const tryAt = (x: number, y: number): void => {
+      const rect: ScreenRect = { x: x - r, y: y - r, w: r * 2, h: r * 2 };
+      if (!this.iconClear(rect, index, LABEL_GAP)) return;
+      const dx = x - mark.homeX;
+      const dy = y - mark.homeY;
+      const d = dx * dx + dy * dy;
+      if (d < bestD) {
+        bestD = d;
+        bestX = x;
+        bestY = y;
+      }
     };
-    for (let i = 0; i < this.placedCount; i++) consider(this.placedRects[i]);
-    for (let i = 0; i < this.statusCount; i++) consider(this.statusRects[i]);
-    return rise;
+    const owner = this.slotById(mark.owner);
+    if (owner) {
+      const b = this.blockAt(owner, owner.dy, owner.dx);
+      tryAt(b.x + b.w + LABEL_GAP + r, b.y + b.h / 2);
+      tryAt(b.x - LABEL_GAP - r, b.y + b.h / 2);
+      tryAt(b.x + b.w / 2, b.y + b.h + LABEL_GAP + r);
+      tryAt(b.x + b.w / 2, b.y - LABEL_GAP - r);
+    }
+    for (let dist = 2; dist <= 36; dist += 2) {
+      tryAt(mark.homeX + dist, mark.homeY);
+      tryAt(mark.homeX - dist, mark.homeY);
+      tryAt(mark.homeX, mark.homeY + dist);
+      tryAt(mark.homeX, mark.homeY - dist);
+      tryAt(mark.homeX + dist, mark.homeY + dist);
+      tryAt(mark.homeX - dist, mark.homeY + dist);
+      tryAt(mark.homeX + dist, mark.homeY - dist);
+      tryAt(mark.homeX - dist, mark.homeY - dist);
+    }
+    if (!(bestD < Number.POSITIVE_INFINITY)) return null;
+    return { x: bestX, y: bestY };
+  }
+
+  private slotById(id: string): LabelSlot | null {
+    const n = this.overlayCount;
+    const pool = this.labelPool;
+    for (let i = 0; i < n; i++) if (pool[i].id === id) return pool[i];
+    return null;
+  }
+
+  private paintStatusIcons(): void {
+    const ctx = this.ctx;
+    ctx.save();
+    for (let i = 0; i < this.statusCount; i++) {
+      const mark = this.statusMarks[i];
+      const rect = this.statusRects[i];
+      const cx = rect.x + rect.w / 2;
+      const cy = rect.y + rect.h / 2;
+      ctx.fillStyle = "rgba(8, 8, 14, 0.88)";
+      ctx.beginPath();
+      ctx.arc(cx, cy, mark.r, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = "rgba(220, 224, 232, 0.92)";
+      ctx.lineWidth = Math.max(1, 1.15 * mark.z);
+      ctx.stroke();
+      ctx.fillStyle = "#e8eef2";
+      ctx.font = `bold ${Math.max(9, 11 * mark.z)}px sans-serif`;
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText("E", cx, cy + 0.4 * mark.scale);
+    }
+    ctx.restore();
   }
 
   private commitLabel(s: LabelSlot, ox: number, oy: number): void {
@@ -2703,16 +2822,27 @@ export class Renderer {
     this.placedCount++;
   }
 
-  private pushStatus(x: number, y: number, w: number, h: number): void {
-    let r = this.statusRects[this.statusCount];
-    if (!r) {
-      r = { x: 0, y: 0, w: 0, h: 0 };
-      this.statusRects[this.statusCount] = r;
+  private pushStatus(owner: string, cx: number, cy: number, r: number, z: number, scale: number): void {
+    let rect = this.statusRects[this.statusCount];
+    if (!rect) {
+      rect = { x: 0, y: 0, w: 0, h: 0 };
+      this.statusRects[this.statusCount] = rect;
     }
-    r.x = x;
-    r.y = y;
-    r.w = w;
-    r.h = h;
+    rect.x = cx - r;
+    rect.y = cy - r;
+    rect.w = r * 2;
+    rect.h = r * 2;
+    let mark = this.statusMarks[this.statusCount];
+    if (!mark) {
+      mark = { owner: "", r: 0, z: 1, scale: 1, homeX: 0, homeY: 0 };
+      this.statusMarks[this.statusCount] = mark;
+    }
+    mark.owner = owner;
+    mark.r = r;
+    mark.z = z;
+    mark.scale = scale;
+    mark.homeX = cx;
+    mark.homeY = cy;
     this.statusCount++;
   }
 
