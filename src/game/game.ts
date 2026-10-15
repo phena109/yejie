@@ -211,8 +211,8 @@ export class Game {
   /** Equals forecastGen only after pointerdown on 確認 for that open forecast. */
   private confirmPressGen = -1;
   /**
-   * A tap that arrived while an animation held `busy`.
-   * Replayed only as a player-unit selection in idle select. Never a move, confirm, or aim.
+   * Latest tap that arrived while an animation held `busy` and hit a selectable player unit.
+   * Replayed only as a selection on the first idle select frame. Never a move, confirm, or aim.
    */
   private pendingTap: { p: Vec2 } | null = null;
 
@@ -901,22 +901,33 @@ export class Game {
   }
 
   /**
-   * Remember a busy-tap only when it would select a living player unit in idle select.
-   * Aim, forecast, and preview taps are dropped. A kept tap only selects a unit.
+   * Remember the latest busy-tap that hits a living selectable player unit.
+   * Skill aim, item aim, and an open preview are dropped — those are not selections.
+   * After 確認, phase stays "forecast" for the action beat; that lock is not aiming,
+   * so a torso tap is kept and later replayed only as a selection.
    */
   private noteSelectTap(p: Vec2): void {
     this.pendingTap = null;
     if (!this.playable() || this.vnOpen || this.pauseOpen) return;
-    if (this.phase !== "select") return;
-    const mode = this.inputMode();
-    if (mode === "skill-target" || mode === "attack-target" || mode === "item-target") return;
+    // Committed forecast: the preview is already closed and the action is animating.
+    const resolving = this.phase === "forecast" && (this.busy || this.acting);
+    if (this.phase !== "select" && !resolving) return;
+    if (!resolving) {
+      const mode = this.inputMode();
+      if (mode === "skill-target" || mode === "attack-target" || mode === "item-target") return;
+    }
     const unit = this.renderer.hitUnit(p.x, p.y, this.map, this.units);
     if (!unit || unit.dead || unit.team !== "player" || unit.npc || unit.acted) return;
-    if (this.selected && this.locked() && this.selected.id !== unit.id) return;
+    // A move lock still blocks a switch during the walk. Once the action itself is
+    // resolving, finishUnit releases that lock before the tap is replayed.
+    if (!resolving && this.selected && this.locked() && this.selected.id !== unit.id) return;
     this.pendingTap = { p: { x: p.x, y: p.y } };
   }
 
-  /** Replay a deferred tap as a unit selection only. Never as a move, aim, or confirm. */
+  /**
+   * Replay a deferred tap as a unit selection only, on the first idle select frame.
+   * Never a move, skill target, or confirm. skillAim and forecast never replay.
+   */
   private flushPendingTap(): void {
     const tap = this.pendingTap;
     if (!tap || this.busy || this.acting) return;
@@ -939,6 +950,12 @@ export class Game {
       return;
     }
     if (this.releaseHitsHud(client)) return;
+    // 確認 keeps phase "forecast" and confirmPressGen latched until the action beat ends.
+    // The preview is already closed. Note a selection tap before that latch swallows it.
+    if (this.busy || this.acting) {
+      this.noteSelectTap(p);
+      return;
+    }
     // This open preview was already armed. Do not dismiss it on the same press.
     if (
       this.phase === "forecast" &&
@@ -946,10 +963,6 @@ export class Game {
       this.forecastGen > 0 &&
       this.confirmPressGen === this.forecastGen
     ) {
-      return;
-    }
-    if (this.busy || this.acting) {
-      this.noteSelectTap(p);
       return;
     }
     this.pendingTap = null;
