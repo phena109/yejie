@@ -43,6 +43,7 @@ import {
   delay,
   dirFromTo,
   factionColor,
+  isHostilePair,
   isPlayerControlled,
   key,
   provoke,
@@ -78,6 +79,9 @@ const VN_PORTRAIT_WAIT_MS = 1500;
 const MOVE_STEP_MS = 250;
 const ACTION_BEAT_MS = 520;
 const ENEMY_GAP_MS = 460;
+/** Temporary hint-bar line when an aim click is not a legal target. */
+const OUT_OF_RANGE_HINT = "超出範圍";
+const OUT_OF_RANGE_MS = 1500;
 
 /** How a board click is interpreted. Aim modes are never moves. */
 type BoardInputMode = "normal" | "move" | "skill-target" | "attack-target" | "item-target";
@@ -215,6 +219,8 @@ export class Game {
    * Replayed only as a selection on the first idle select frame. Never a move, confirm, or aim.
    */
   private pendingTap: { p: Vec2 } | null = null;
+  /** Timeout id for the temporary out-of-range hint. 0 when none is pending. */
+  private rangeHintTimer = 0;
 
   constructor(canvas: HTMLCanvasElement) {
     this.preloadVnPortraits();
@@ -1054,6 +1060,8 @@ export class Game {
     ) {
       return;
     }
+    // A new board action ends the temporary out-of-range line.
+    this.dismissRangeHint();
     // A body or ring is that unit in every aim phase, even when the sprite covers an empty move tile.
     // A miss still uses the tile prism, so empty reachable tiles stay selectable.
     const pickUnit =
@@ -1160,6 +1168,11 @@ export class Game {
       }
     }
 
+    if (sel && !sel.actedThisTurn && u && this.attackOutOfRange(sel, u)) {
+      this.flashOutOfRange();
+      return;
+    }
+
     if (u) this.inspectUnit(u);
     else if (obj && !obj.gone) this.inspectObject(obj.id);
     else if (sel && !this.locked()) {
@@ -1193,12 +1206,54 @@ export class Game {
     if (!actor) return;
     const targets = skillTargets(actor, this.map, this.units);
     const t = targets.find((u) => u.x === tile.x && u.y === tile.y);
-    if (!t) {
-      audio.play("miss");
-      this.backFromSkill();
+    if (t) {
+      this.openForecast(makeSkillForecast(actor, t, this.map));
       return;
     }
-    this.openForecast(makeSkillForecast(actor, t, this.map));
+    // A living unit that is not a legal target stays in skill aim. Empty ground still cancels.
+    if (this.unitAt(tile.x, tile.y)) {
+      this.flashOutOfRange();
+      return;
+    }
+    audio.play("miss");
+    this.backFromSkill();
+  }
+
+  /** Hostile unit attack aim would accept if it were inside the current attack tiles. */
+  private attackOutOfRange(actor: Unit, u: Unit): boolean {
+    if (u.dead || u.id === actor.id) return false;
+    const hostile =
+      isHostilePair(actor, u) || (actor.team === "player" && !actor.npc && u.stance !== "friendly");
+    return hostile && !this.actionTiles.has(key(u.x, u.y));
+  }
+
+  /**
+   * Stay in the current aim. The hint bar shows 超出範圍, then the normal aim hint
+   * returns after a short delay or when the next action replaces it.
+   */
+  private flashOutOfRange(): void {
+    if (this.rangeHintTimer) window.clearTimeout(this.rangeHintTimer);
+    this.inspect = null;
+    this.log = OUT_OF_RANGE_HINT;
+    audio.play("miss");
+    this.rangeHintTimer = window.setTimeout(() => {
+      this.rangeHintTimer = 0;
+      if (this.log !== OUT_OF_RANGE_HINT) return;
+      this.log = this.hintForCurrentState();
+      this.syncUi();
+    }, OUT_OF_RANGE_MS);
+    this.syncUi();
+  }
+
+  /** Next action: drop the out-of-range line so it does not stick past this click. */
+  private dismissRangeHint(): void {
+    if (this.rangeHintTimer) {
+      window.clearTimeout(this.rangeHintTimer);
+      this.rangeHintTimer = 0;
+    }
+    if (this.log !== OUT_OF_RANGE_HINT) return;
+    this.log = this.hintForCurrentState();
+    this.syncUi();
   }
 
   private tryItemTarget(tile: Vec2): void {
@@ -1259,6 +1314,7 @@ export class Game {
 
   cancel(): void {
     if (this.busy) return;
+    this.dismissRangeHint();
     this.clearPendingTap();
     if (this.phase === "forecast") {
       this.backFromForecast();
