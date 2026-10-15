@@ -678,6 +678,8 @@ export class Game {
     this.title.hidden = true;
     this.phase = "select";
     audio.setBgm("battle");
+    // Before the intro, so the board behind the dialogue is already the scenario.
+    this.applyDebugBattleScenario();
     // M1 stays at 0.7 until the #9 background art lands.
     if (this.missionIndex === 0) this.renderer.centerOn(this.units, this.map);
     else this.renderer.fitToMap(this.map);
@@ -687,6 +689,9 @@ export class Game {
     if (this.busy) await this.playMissionIntro();
     this.clearPendingTap();
     this.busy = false;
+    // Again after the intro: hash hooks that run while the dialogue is up
+    // must not leave someone else selected or already acted.
+    this.applyDebugBattleScenario();
     this.syncUi();
     this.autosave();
   }
@@ -1571,13 +1576,68 @@ export class Game {
   }
 
   /**
+   * Dev build, or a production page opened with `?debug=1`.
+   * Shared by the window hook and `?scenario=` layouts.
+   */
+  private debugHooksEnabled(): boolean {
+    const params = new URLSearchParams(location.search);
+    return import.meta.env.DEV || params.get("debug") === "1";
+  }
+
+  /**
+   * Mission 1 player's turn, `?scenario=heal` only.
+   * Priya and Mara stand on flat open tiles, orthogonally adjacent so Mara is
+   * inside 包紮. The step is east, not the default-camera depth axis (the
+   * (1, 1) diagonal at yaw 0), so the sprites do not stack. Mara is at half
+   * HP so the heal preview shows a gain. Dana is outside that ring but in frame.
+   * Priya is selected and has not acted. No effect on any other mission, or
+   * without the debug gate.
+   */
+  private applyDebugBattleScenario(): void {
+    if (!this.debugHooksEnabled()) return;
+    if (new URLSearchParams(location.search).get("scenario") !== "heal") return;
+    if (this.mission.id !== "m1" || this.phase !== "select") return;
+    const priya = this.units.find((u) => u.id === "priya");
+    const mara = this.units.find((u) => u.id === "mara");
+    const dana = this.units.find((u) => u.id === "dana");
+    if (!priya || !mara || !dana) return;
+    // South street of mission 1: height 0, nothing blocking.
+    const priyaAt = { x: 4, y: 10 };
+    const maraAt = { x: 5, y: 10 };
+    const danaAt = { x: 7, y: 10 };
+    const spots = [priyaAt, maraAt, danaAt];
+    const ids = new Set(["priya", "mara", "dana"]);
+    for (const s of spots) {
+      const tile = this.map.tile(s.x, s.y);
+      if (!tile || tile.h !== 0 || !this.map.walkable(s.x, s.y)) return;
+      const occupied = this.units.some((u) => !u.dead && !ids.has(u.id) && u.x === s.x && u.y === s.y);
+      if (occupied) return;
+    }
+    priya.x = priyaAt.x;
+    priya.y = priyaAt.y;
+    mara.x = maraAt.x;
+    mara.y = maraAt.y;
+    dana.x = danaAt.x;
+    dana.y = danaAt.y;
+    mara.hp = Math.max(1, Math.floor(mara.maxHp / 2));
+    for (const u of [priya, mara, dana]) {
+      u.acted = false;
+      u.skillUsed = false;
+      u.movedThisTurn = false;
+      u.actedThisTurn = false;
+      u.dead = false;
+    }
+    this.renderer.centerOn(this.units, this.map);
+    this.selectUnit(priya);
+  }
+
+  /**
    * Dev/test hook. Ends the current mission through the normal victory path
    * so a run can reach 下一場 and the next briefing. Installed only in dev
    * or when the page URL has `?debug=1`.
    */
   private installDebugHook(): void {
-    const params = new URLSearchParams(location.search);
-    if (!import.meta.env.DEV && params.get("debug") !== "1") return;
+    if (!this.debugHooksEnabled()) return;
     window.__yejieDebug = {
       forceWin: () => {
         this.win();
