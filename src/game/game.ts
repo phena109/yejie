@@ -792,15 +792,58 @@ export class Game {
     return null;
   }
 
+  /** Selected player unit still has a move left. Finished units and the enemy phase do not. */
+  private canStillMove(u: Unit): boolean {
+    if (this.phase === "enemy") return false;
+    return u.team === "player" && !u.dead && !u.npc && !u.acted && !u.movedThisTurn;
+  }
+
+  private commandHint(u: Unit): string {
+    const bits: string[] = [];
+    if (this.canStillMove(u)) bits.push("可移動");
+    if (!u.acted && !u.actedThisTurn) bits.push("可攻擊／技能／道具");
+    return bits.length ? bits.join("　") : "結束或待機";
+  }
+
+  /** Hint bar for the phase we are in after a preview closes or a command ends. */
+  private hintForCurrentState(): string {
+    if (this.phase === "enemy") return "敵軍行動中";
+    const u = this.selected;
+    if (this.phase === "skillAim" && u) return u.skillHint;
+    if (this.phase === "itemAim" && this.pendingItem) return `${ITEMS[this.pendingItem].name}　選我軍單位`;
+    if (this.phase === "select" && u) return this.commandHint(u);
+    return "我軍階段";
+  }
+
+  /**
+   * Drop a forecast line or a 可移動 line that no longer matches the phase.
+   * Executing a forecast keeps phase "forecast" until the result is written.
+   */
+  private scrubHints(): void {
+    const play =
+      this.phase === "select" ||
+      this.phase === "skillAim" ||
+      this.phase === "itemAim" ||
+      this.phase === "forecast" ||
+      this.phase === "enemy";
+    if (!play) return;
+    const previewStuck = this.phase !== "forecast" && this.log.startsWith("預覽");
+    const moveStuck = this.log.includes("可移動") && !(this.phase === "select" && !!this.selected && this.canStillMove(this.selected));
+    if (!previewStuck && !moveStuck) return;
+    this.log = this.hintForCurrentState();
+  }
+
   private showCommand(u: Unit): void {
+    if (this.phase === "enemy") {
+      this.log = "敵軍行動中";
+      this.syncUi();
+      return;
+    }
     this.forecast = null;
     this.bumpForecast();
     this.refreshRanges(u);
     this.phase = "select";
-    const bits: string[] = [];
-    if (!u.movedThisTurn) bits.push("可移動");
-    if (!u.actedThisTurn) bits.push("可攻擊／技能／道具");
-    this.log = bits.length ? bits.join("　") : "結束或待機";
+    this.log = this.commandHint(u);
     this.syncUi();
   }
 
@@ -1164,21 +1207,24 @@ export class Game {
   }
 
   private backFromForecast(): void {
-    const skill = !!this.selected && this.skillTiles.size > 0 && this.forecast?.kind === "skill";
+    const u = this.selected;
+    const skill = !!u && this.skillTiles.size > 0 && this.forecast?.kind === "skill";
     this.forecast = null;
     this.bumpForecast();
     this.clearPendingTap();
-    if (!this.selected) {
+    if (!u) {
       this.phase = "select";
+      this.log = this.hintForCurrentState();
       this.syncUi();
       return;
     }
     if (skill) {
       this.phase = "skillAim";
+      this.log = u.skillHint;
       this.syncUi();
       return;
     }
-    this.showCommand(this.selected);
+    this.showCommand(u);
   }
 
   private backFromSkill(): void {
@@ -2285,6 +2331,7 @@ export class Game {
   }
 
   private syncUi(): void {
+    this.scrubHints();
     this.hudTurn.textContent = `回合 ${this.turn}`;
     this.hudPhase.textContent =
       this.phase === "enemy"
