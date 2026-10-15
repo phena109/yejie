@@ -646,6 +646,14 @@ export class Renderer {
   private readonly placedRects: ScreenRect[] = [];
   /** Status badges (the acted "E" mark and any sibling icon) from this frame. */
   private readonly statusRects: ScreenRect[] = [];
+  /**
+   * Plate shift (dx, dy) last committed for each unit, plus the tile it was solved on.
+   * The shift is relative to that unit's own sprite (itself anchored at worldToScreen).
+   * It stays put until that unit changes tile, or the frozen rect would overlap another
+   * plate or an E icon. A neighbour moving yields; this plate is not pushed aside.
+   */
+  private readonly labelHold = new Map<string, { dx: number; dy: number; x: number; y: number }>();
+  private readonly labelSeen = new Set<string>();
 
   tileH(): number {
     return TILE_W * Math.sin((this.pitch * Math.PI) / 180);
@@ -2446,6 +2454,7 @@ export class Renderer {
     this.placedCount = 0;
     if (n === 0) {
       this.labelRects.length = 0;
+      this.labelHold.clear();
       return;
     }
 
@@ -2528,7 +2537,36 @@ export class Renderer {
       if (a > b) return 1;
       return 0;
     });
-    for (let i = 0; i < n; i++) this.placeLabel(pool[this.labelOrder[i]]);
+    const seen = this.labelSeen;
+    seen.clear();
+    // Unmoved plates keep their shift and are reserved first. A unit that changed
+    // tile is solved afterwards, so its plate is the one that lifts out of the way.
+    const stable: number[] = [];
+    const dirty: number[] = [];
+    for (let k = 0; k < n; k++) {
+      const i = this.labelOrder[k];
+      const prev = this.labelHold.get(pool[i].id);
+      const u = drawn[i];
+      if (prev && prev.x === u.x && prev.y === u.y) stable.push(i);
+      else dirty.push(i);
+    }
+    for (const i of stable) {
+      const prev = this.labelHold.get(pool[i].id)!;
+      this.holdLabel(pool[i], prev.dx, prev.dy);
+    }
+    for (const i of dirty) this.placeLabel(pool[i]);
+    for (let k = 0; k < n; k++) {
+      const i = this.labelOrder[k];
+      const s = pool[i];
+      const u = drawn[i];
+      this.labelHold.set(s.id, { dx: s.dx, dy: s.dy, x: u.x, y: u.y });
+      seen.add(s.id);
+    }
+    if (this.labelHold.size !== seen.size) {
+      for (const id of this.labelHold.keys()) {
+        if (!seen.has(id)) this.labelHold.delete(id);
+      }
+    }
 
     for (let i = 0; i < n; i++) this.paintUnitRing(pool[i]);
     for (let i = 0; i < n; i++) this.paintUnitLabel(pool[i]);
@@ -2564,15 +2602,19 @@ export class Renderer {
   }
 
   /**
-   * Anchor is above this sprite. Overlaps with plates already placed (unit-id order)
-   * and with status icons are cleared by the smallest upward shift. The shift never
+   * Anchor is above this sprite. Overlaps with plates already placed and with
+   * status icons are cleared by the smallest upward shift. The shift never
    * exceeds LABEL_SHIFT_CAP screen pixels; anything still overlapping is left overlapping.
    */
   private placeLabel(s: LabelSlot): void {
+    this.placeLabelFrom(s, 0, 0);
+  }
+
+  /** Fresh stack from the anchor. Used when this unit itself changed tile. */
+  private placeLabelFrom(s: LabelSlot, ox: number, oy: number): void {
     const cap = LABEL_SHIFT_CAP;
-    let oy = 0;
     for (let step = 0; step < 8; step++) {
-      const rise = this.riseToClear(this.blockAt(s, oy, 0));
+      const rise = this.riseToClear(this.blockAt(s, oy, ox));
       if (rise <= 0.25) break;
       const next = oy - rise;
       if (-next > cap) {
@@ -2583,7 +2625,44 @@ export class Renderer {
     }
     if (oy < -cap) oy = -cap;
     if (oy > 0) oy = 0;
-    this.commitLabel(s, 0, oy);
+    this.commitLabel(s, ox, oy);
+  }
+
+  /**
+   * Frozen shift. Stays exact when the drawn rect misses every plate and E icon
+   * already placed. An intersection with something underneath lifts by that
+   * overlap only. A plate already above this one is not leapt over: that jump
+   * is what slid an unrelated name after the mover had settled.
+   */
+  private holdLabel(s: LabelSlot, ox: number, oy: number): void {
+    const cap = LABEL_SHIFT_CAP;
+    for (let step = 0; step < 8; step++) {
+      const rise = this.riseOffLower(this.blockAt(s, oy, ox));
+      if (rise <= 0.25) break;
+      const next = oy - rise;
+      if (-next > cap) {
+        oy = -cap;
+        break;
+      }
+      oy = next;
+    }
+    if (oy < -cap) oy = -cap;
+    if (oy > 0) oy = 0;
+    this.commitLabel(s, ox, oy);
+  }
+
+  /** Lift so `r` clears intersecting plates and icons whose top is not above `r`. */
+  private riseOffLower(r: ScreenRect): number {
+    let rise = 0;
+    const consider = (p: ScreenRect): void => {
+      if (!rectsOverlap(r, p)) return;
+      if (p.y < r.y) return;
+      const need = r.y + r.h - p.y;
+      if (need > rise) rise = need;
+    };
+    for (let i = 0; i < this.placedCount; i++) consider(this.placedRects[i]);
+    for (let i = 0; i < this.statusCount; i++) consider(this.statusRects[i]);
+    return rise;
   }
 
   /**
