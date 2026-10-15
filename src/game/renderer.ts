@@ -1477,8 +1477,8 @@ export class Renderer {
 
     const kind = overlays.areaKind;
     if (overlays.area.has(k) && !overlays.hot.has(k)) {
-      const mute = kind === "skill" || kind === "item" ? "rgba(160, 130, 220, 0.16)" : "rgba(255, 90, 110, 0.14)";
-      const stroke = kind === "skill" || kind === "item" ? "rgba(180, 150, 230, 0.45)" : "rgba(255, 110, 130, 0.42)";
+      const mute = kind === "skill" || kind === "item" ? "rgba(230, 48, 255, 0.3)" : "rgba(255, 90, 110, 0.14)";
+      const stroke = kind === "skill" || kind === "item" ? "rgba(242, 92, 255, 0.76)" : "rgba(255, 110, 130, 0.42)";
       this.quadPath(this.insetQuad(top, 0.9));
       ctx.fillStyle = mute;
       ctx.fill();
@@ -1490,9 +1490,9 @@ export class Renderer {
       const pulse = 0.5 + 0.28 * Math.sin(this.time / 190);
       const fill =
         kind === "skill" || kind === "item"
-          ? `rgba(190, 150, 255, ${0.28 + pulse * 0.22})`
+          ? `rgba(244, 72, 255, ${0.4 + pulse * 0.22})`
           : `rgba(255, 80, 110, ${0.3 + pulse * 0.22})`;
-      const stroke = kind === "skill" || kind === "item" ? "rgba(230, 210, 255, 0.98)" : "rgba(255, 170, 180, 0.98)";
+      const stroke = kind === "skill" || kind === "item" ? "rgba(255, 170, 255, 0.98)" : "rgba(255, 170, 180, 0.98)";
       this.quadPath(this.insetQuad(top, 0.86));
       ctx.fillStyle = fill;
       ctx.fill();
