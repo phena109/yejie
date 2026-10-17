@@ -1,4 +1,4 @@
-const CACHE = "yejie-v24";
+const CACHE = "yejie-v30";
 
 const PRECACHE = [
   "./",
@@ -6,7 +6,19 @@ const PRECACHE = [
   "./manifest.webmanifest",
   "./icon.svg",
   "./version.json",
+  "./sprites/vn-mara.webp",
+  "./sprites/vn-dana.webp",
+  "./sprites/vn-priya.webp",
 ];
+
+/** Only keep full 200 responses, and never an HTML fallback page stored under an image/script URL. */
+function cacheable(request, res) {
+  if (!res || res.status !== 200 || res.type === "opaque") return false;
+  const type = (res.headers.get("content-type") || "").toLowerCase();
+  if (request.destination === "image") return type.startsWith("image/");
+  if (/\.(png|webp|jpe?g|gif|svg|glb|js|css)$/i.test(new URL(request.url).pathname)) return !type.startsWith("text/html");
+  return true;
+}
 
 self.addEventListener("install", (event) => {
   event.waitUntil(
@@ -74,14 +86,14 @@ self.addEventListener("fetch", (event) => {
     caches.match(event.request).then((cached) => {
       const fetched = fetch(event.request)
         .then((res) => {
-          if (res && res.ok) {
+          if (cacheable(event.request, res)) {
             const copy = res.clone();
             caches.open(CACHE).then((cache) => cache.put(event.request, copy));
           }
           return res;
         })
         .catch(() => cached);
-      return cached || fetched;
+      return cached && cacheable(event.request, cached) ? cached : fetched;
     }),
   );
 });

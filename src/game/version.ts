@@ -1,3 +1,3 @@
-export const VERSION = "0.6.17";
-export const BUILD_STAMP = "20260915";
-export const CACHE_NAME = "yejie-v29";
+export const VERSION = "0.6.18";
+export const BUILD_STAMP = "20261018";
+export const CACHE_NAME = "yejie-v30";
