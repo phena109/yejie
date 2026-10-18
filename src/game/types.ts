@@ -32,8 +32,10 @@ export type Role =
   | "gunner"
   | "worker";
 export type Terrain = "street" | "stairs" | "roof";
-// Grid-facing index: N, NE, E, SE, S, SW, W, NW.
-export type Dir = 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7;
+// Grid-facing index: N, E, S, W (4-way, as before 0.6.8). Movement and facing are orthogonal.
+export type Dir = 0 | 1 | 2 | 3;
+/** Number of grid facings. Facing math below derives from this, not from a literal 4 or 8. */
+export const DIR_COUNT = 4;
 export type Prop = "stall" | "ac" | "lamp" | "crate";
 export type Diff = "L" | "M" | "H";
 
@@ -128,14 +130,28 @@ export type Inspect =
 
 export const DIRS: Vec2[] = [
   { x: 0, y: -1 },
-  { x: 1, y: -1 },
   { x: 1, y: 0 },
-  { x: 1, y: 1 },
   { x: 0, y: 1 },
-  { x: -1, y: 1 },
   { x: -1, y: 0 },
-  { x: -1, y: -1 },
 ];
+
+/** Grid heading of a facing, radians clockwise from grid N (0, -1). */
+export function dirAngle(dir: Dir): number {
+  return (dir * Math.PI * 2) / DIR_COUNT;
+}
+
+/** Unit grid vector of a facing, derived from its heading so it works for any DIR_COUNT. */
+export function dirVector(dir: Dir): Vec2 {
+  const a = dirAngle(dir);
+  return { x: Math.sin(a), y: -Math.cos(a) };
+}
+
+/** Nearest facing to a grid heading (radians clockwise from N). Exact ties round clockwise. */
+export function dirFromAngle(a: number): Dir {
+  const step = (Math.PI * 2) / DIR_COUNT;
+  const i = Math.floor(a / step + 0.5 + 1e-9);
+  return ((((i % DIR_COUNT) + DIR_COUNT) % DIR_COUNT) as Dir);
+}
 
 export const POWER_MULT: Record<Diff, number> = { L: 0.75, M: 1, H: 1.35 };
 
@@ -157,16 +173,8 @@ export function parseKey(s: string): Vec2 {
 export function dirFromTo(a: Vec2, b: Vec2): Dir {
   const dx = b.x - a.x;
   const dy = b.y - a.y;
-  const sx = Math.sign(dx);
-  const sy = Math.sign(dy);
-  if (sx === 0 && sy <= 0) return 0;
-  if (sx > 0 && sy < 0) return 1;
-  if (sx > 0 && sy === 0) return 2;
-  if (sx > 0 && sy > 0) return 3;
-  if (sx === 0 && sy > 0) return 4;
-  if (sx < 0 && sy > 0) return 5;
-  if (sx < 0 && sy === 0) return 6;
-  return 7;
+  if (Math.abs(dx) >= Math.abs(dy)) return dx >= 0 ? 1 : 3;
+  return dy >= 0 ? 2 : 0;
 }
 
 export function manhattan(a: Vec2, b: Vec2): number {

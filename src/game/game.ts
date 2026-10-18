@@ -2240,7 +2240,7 @@ export class Game {
   private captureSave(): SaveGame {
     const play = this.playable() || this.phase === "enemy";
     return {
-      v: 1,
+      v: 2,
       savedAt: Date.now(),
       missionIndex: this.missionIndex,
       missionName: play ? `${this.mission.number}　戰鬥中` : this.mission.number,
