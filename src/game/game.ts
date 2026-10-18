@@ -1750,11 +1750,13 @@ export class Game {
 
   /**
    * Mission 1 player's turn, `?debug=1&scenario=flank` only (or `?scenario=flank` on the dev server).
-   * Pike stands on the flat south street at (5, 10) facing N (up-right on screen at the default
-   * camera; his ground chevron shows it). Mara is on his W flank at (4, 10), so 重擊 on Pike previews
-   * 側面 +25%; Dana is behind him at (5, 11), so her attack previews 背面 +50%. Priya waits at (7, 11).
-   * Pike is at full HP so either preview can be confirmed first; a hit never turns the target, so the
-   * other arc still applies after it. Mara is selected. No effect elsewhere or without the debug gate.
+   * Pike stands on flat ground at (7, 9) facing N (up-right on screen at the default camera; his ground
+   * chevron shows it). Mara is on his W flank at (6, 9), so 重擊 on Pike previews 側面 +25%. Dana stands
+   * one tile further back, two tiles behind him at (7, 11): step her to (7, 10) and her attack previews
+   * 背面 +50%. A W neighbour and an S neighbour share a screen column at yaw 0, so with Dana adjacent she
+   * hid Mara; the gap keeps every body clickable. Priya waits at (3, 11). Pike is at full HP and a hit
+   * never turns the target, so either attack can be confirmed first. Mara is selected.
+   * No effect elsewhere or without the debug gate.
    */
   private applyFlankScenario(): void {
     if (this.mission.id !== "m1" || this.phase !== "select") return;
@@ -1764,10 +1766,10 @@ export class Game {
     const priya = this.units.find((u) => u.id === "priya");
     if (!pike || !mara || !dana || !priya) return;
     const place: Array<[Unit, number, number]> = [
-      [pike, 5, 10],
-      [mara, 4, 10],
-      [dana, 5, 11],
-      [priya, 7, 11],
+      [pike, 7, 9],
+      [mara, 6, 9],
+      [dana, 7, 11],
+      [priya, 3, 11],
     ];
     const ids = new Set(place.map(([u]) => u.id));
     for (const [, x, y] of place) {
