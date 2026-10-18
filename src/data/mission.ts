@@ -319,7 +319,10 @@ export const MISSIONS: Mission[] = [
     number: "任務 01",
     loc: "國王碼頭夜市・屋頂",
     hudSub: "國王碼頭夜市",
+    // Duke's original two-paragraph setup (replaced in bef25f6), restored ahead of the roof beat.
     paragraphs: [
+      "這座城市看起來很普通。夜間公車、打烊很晚的市場、警察無線電。一個自稱 Assembly 的私人團體，長期把魔法排除在紀錄之外。他們換了新主席。舊規矩是藏起來。新規矩是先拿下這座城市，再拿下其他地方。",
+      "你是夜班警員 Mara Ellison。不是特勤單位，也不是什麼重要人物。你只是會早一秒發現事情，這讓你還有點用，但不足以讓人聽你的。今晚有人報案，說市場屋頂上有騷動。你去了。你的搭檔 Dana Ruiz 也去了。市場急救員 Priya Shah 不肯離開。屋頂上，一群沒穿制服的人把街道標得像棋盤。他們本來就不打算讓目擊者走掉。這只是很多場裡的一場，本來應該安靜做完。",
       "屋頂風很大。柏油上三個白圈，空的。街道被標得像棋盤——他們本來就不打算讓目擊者走掉。",
     ],
     voices: [
