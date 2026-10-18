@@ -874,12 +874,12 @@ export class Game {
     u.anim = "walk";
     u.animStart = performance.now();
     for (let i = 1; i < path.length; i++) {
+      // Turn at every step of the walk (restored from 0.6.1; e63638f had removed it).
+      u.dir = dirFromTo(path[i - 1], path[i]);
       u.x = path[i].x;
       u.y = path[i].y;
       await this.waitMs(MOVE_STEP_MS);
     }
-    // Preserve the starting facing during the walk; snap once at the move endpoint.
-    if (path.length > 1) u.dir = dirFromTo(path[path.length - 2], path[path.length - 1]);
     u.x = Math.round(u.x);
     u.y = Math.round(u.y);
     u.anim = "idle";
@@ -1540,11 +1540,12 @@ export class Game {
         e.animStart = performance.now();
       }
       for (let step = 1; step < path.length; step++) {
+        // Enemies and NPCs turn at every step too.
+        e.dir = dirFromTo(path[step - 1], path[step]);
         e.x = path[step].x;
         e.y = path[step].y;
         await this.waitMs(MOVE_STEP_MS);
       }
-      if (path.length > 1) e.dir = dirFromTo(path[path.length - 2], path[path.length - 1]);
       e.x = Math.round(e.x);
       e.y = Math.round(e.y);
       e.anim = "idle";
