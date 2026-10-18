@@ -294,6 +294,8 @@ export class Game {
     el<HTMLButtonElement>("btn-load").addEventListener("click", () => this.openSaves("load"));
     // Narrow or short screens show the unit chip compact (name + HP); tapping it expands the full stats.
     this.chip.addEventListener("click", () => this.chip.classList.toggle("open"));
+    // The expanded chip can cover the corner buttons on narrow screens; any board tap folds it back.
+    el<HTMLCanvasElement>("board").addEventListener("pointerdown", () => this.chip.classList.remove("open"));
     el<HTMLButtonElement>("btn-bag-title").addEventListener("click", () => this.openBag());
     el<HTMLButtonElement>("btn-refresh").addEventListener("click", () => void this.refreshApp());
     el<HTMLButtonElement>("btn-brief-title").addEventListener("click", () => this.goTitle());
