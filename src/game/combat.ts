@@ -1,14 +1,23 @@
 import type { GameMap } from "./map";
 import type { Forecast, Unit } from "./types";
-import { DIRS, isHostilePair } from "./types";
+import { dirVector, isHostilePair } from "./types";
 
+/**
+ * Which arc of the defender the attacker stands in, by angle from the defender's facing:
+ * front within 45°, back within 45° of straight behind, side otherwise. Exactly 45° counts as
+ * front and exactly 135° as side (a tie always goes to the lower-damage arc). Works for any facing
+ * angle; with 4-way facing every adjacent melee tile is front, left side, right side or back.
+ */
 export function facingOf(defender: Unit, attacker: Unit): "front" | "side" | "back" {
   const dx = attacker.x - defender.x;
   const dy = attacker.y - defender.y;
-  const f = DIRS[defender.dir];
-  const dot = dx * f.x + dy * f.y;
-  if (dot > 0) return "front";
-  if (dot < 0) return "back";
+  if (dx === 0 && dy === 0) return "front";
+  const f = dirVector(defender.dir);
+  const along = dx * f.x + dy * f.y;
+  const across = Math.abs(dx * f.y - dy * f.x);
+  const eps = 1e-9;
+  if (along > 0 && along >= across - eps) return "front";
+  if (along < 0 && -along > across + eps) return "back";
   return "side";
 }
 
