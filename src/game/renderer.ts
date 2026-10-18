@@ -2745,9 +2745,9 @@ export class Renderer {
   }
 
   /**
-   * Anchor is above this sprite. A sideways nudge (centre within LABEL_NUDGE_CAP)
-   * is tried before any lift, and the lift stays within LABEL_LIFT_CAP.
-   * E icons are obstacles when that costs no extra lift; otherwise they move aside.
+   * Anchor is above this sprite. A sideways nudge (centre within LABEL_NUDGE_CAP, scaled by
+   * zoom) is tried before any lift, and the lift stays within LABEL_LIFT_CAP (scaled by zoom).
+   * E icons always move aside; plates never move for them.
    */
   private placeLabel(s: LabelSlot): void {
     const next = this.resolveLabel(s);
@@ -2768,22 +2768,38 @@ export class Renderer {
     this.commitLabel(s, next.ox, next.oy);
   }
 
-  /** Prefer a slot that also misses E icons when it does not lift any further. */
+  /**
+   * Caps grow with zoom: at 0.7 a plate may slide 24px and lift 20px; zoomed in (M4 frames at
+   * about 1.1) the plates and the tile spacing are bigger, so the same caps could not clear
+   * Rosa/Oz and the solver fell back to an overlap.
+   */
+  private capScale(s: LabelSlot): number {
+    return Math.max(1, s.z / 0.7);
+  }
+
+  /**
+   * E icons never move a plate (an icon steps aside in settleStatusIcons), so a unit's own
+   * badge appearing cannot slide its name. Plates do avoid other units' faces when that fits
+   * inside the caps, so a unit stepping in front of an ally does not hide the ally's face.
+   */
   private resolveLabel(s: LabelSlot): { ox: number; oy: number } {
+    const faces = this.seekLabel(s, true);
+    if (faces) return faces;
     const plates = this.seekLabel(s, false);
-    const both = this.seekLabel(s, true);
-    if (both && (!plates || -both.oy <= -plates.oy)) return both;
     if (plates) return plates;
     return this.leastLabel(s);
   }
 
-  /** Smallest lift, then smallest sideways slide, that clears placed plates and maybe icons. */
-  private seekLabel(s: LabelSlot, icons: boolean): { ox: number; oy: number } | null {
-    for (let lift = 0; lift <= LABEL_LIFT_CAP; lift++) {
+  /** Smallest lift, then smallest sideways slide, that clears placed plates and maybe faces. */
+  private seekLabel(s: LabelSlot, faces: boolean): { ox: number; oy: number } | null {
+    const k = this.capScale(s);
+    const liftCap = Math.round(LABEL_LIFT_CAP * k);
+    const nudgeCap = Math.round(LABEL_NUDGE_CAP * k);
+    for (let lift = 0; lift <= liftCap; lift++) {
       const oy = -lift;
-      for (let side = 0; side <= LABEL_NUDGE_CAP; side++) {
-        if (this.labelClear(s, side, oy, icons)) return { ox: side, oy };
-        if (side !== 0 && this.labelClear(s, -side, oy, icons)) return { ox: -side, oy };
+      for (let side = 0; side <= nudgeCap; side++) {
+        if (this.labelClear(s, side, oy, faces)) return { ox: side, oy };
+        if (side !== 0 && this.labelClear(s, -side, oy, faces)) return { ox: -side, oy };
       }
     }
     return null;
@@ -2791,13 +2807,16 @@ export class Renderer {
 
   /** Inside the caps, the offset with the least plate-on-plate area. */
   private leastLabel(s: LabelSlot): { ox: number; oy: number } {
+    const k = this.capScale(s);
+    const liftCap = Math.round(LABEL_LIFT_CAP * k);
+    const nudgeCap = Math.round(LABEL_NUDGE_CAP * k);
     let ox = 0;
     let oy = 0;
     let best = Number.POSITIVE_INFINITY;
-    let bestLift = LABEL_LIFT_CAP + 1;
-    let bestSide = LABEL_NUDGE_CAP + 1;
-    for (let lift = 0; lift <= LABEL_LIFT_CAP; lift++) {
-      for (let side = 0; side <= LABEL_NUDGE_CAP; side++) {
+    let bestLift = liftCap + 1;
+    let bestSide = nudgeCap + 1;
+    for (let lift = 0; lift <= liftCap; lift++) {
+      for (let side = 0; side <= nudgeCap; side++) {
         const xs = side === 0 ? [0] : [side, -side];
         for (const x of xs) {
           const area = this.plateOverlap(s, x, -lift);
@@ -2817,14 +2836,22 @@ export class Renderer {
     return { ox, oy };
   }
 
-  private labelClear(s: LabelSlot, ox: number, oy: number, icons: boolean): boolean {
+  /** Face box of another unit: the upper-middle of its drawn body. */
+  private faceRect(o: LabelSlot): ScreenRect {
+    return { x: o.bodyX + o.bodyW * 0.25, y: o.bodyY + o.bodyH * 0.04, w: o.bodyW * 0.5, h: o.bodyH * 0.36 };
+  }
+
+  private labelClear(s: LabelSlot, ox: number, oy: number, faces: boolean): boolean {
     const r = this.blockAt(s, oy, ox);
     for (let i = 0; i < this.placedCount; i++) {
       if (!separatedBy(r, this.placedRects[i], LABEL_GAP)) return false;
     }
-    if (!icons) return true;
-    for (let i = 0; i < this.statusCount; i++) {
-      if (!separatedBy(r, this.statusRects[i], LABEL_GAP)) return false;
+    if (!faces) return true;
+    const n = this.overlayCount;
+    for (let i = 0; i < n; i++) {
+      const o = this.labelPool[i];
+      if (o === s || o.id === s.id) continue;
+      if (overlapArea(r, this.faceRect(o)) > 0) return false;
     }
     return true;
   }
