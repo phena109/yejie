@@ -16,6 +16,9 @@ export const BASE = 8;
 export const PITCH_MIN = 15;
 export const PITCH_MAX = 75;
 export const PITCH_DEFAULT = 30;
+/** Camera zoom range shared by framing and pinch/wheel. 0.4 lets a ~360px phone see the whole M1 board. */
+export const ZOOM_MIN = 0.4;
+export const ZOOM_MAX = 1.8;
 
 export type AreaKind = "attack" | "skill" | "item";
 
@@ -1239,10 +1242,9 @@ export class Renderer {
    * Bounds are every tile's top corners (isoOf) plus the prism base (topMetrics.drop),
    * so the lowest edge includes the slab under the front faces.
    */
-  fitToMap(map: GameMap): void {
-    this.syncMap(map);
-    if (!(this.cam.zoom > 1e-4)) this.cam.zoom = 1;
-    const z0 = this.cam.zoom;
+  /** Board extent in iso world units (zoom 1) at the current yaw and pitch, slab included. */
+  private boardBounds(map: GameMap): { minX: number; minY: number; maxX: number; maxY: number } | null {
+    const z0 = this.cam.zoom > 1e-4 ? this.cam.zoom : 1;
     const corner: Array<[number, number]> = [
       [-0.5, -0.5],
       [0.5, -0.5],
@@ -1253,14 +1255,12 @@ export class Renderer {
     let minY = Infinity;
     let maxX = -Infinity;
     let maxY = -Infinity;
-    let any = false;
     for (let y = 0; y < map.h; y++) {
       for (let x = 0; x < map.w; x++) {
         const t = map.tiles[y][x];
         const drop = this.topMetrics(t.x, t.y, t.h).drop / z0;
         for (const [dx, dy] of corner) {
           const p = this.isoOf(t.x + dx, t.y + dy, t.h);
-          any = true;
           if (p.x < minX) minX = p.x;
           if (p.y < minY) minY = p.y;
           if (p.x > maxX) maxX = p.x;
@@ -1270,14 +1270,45 @@ export class Renderer {
         }
       }
     }
-    if (!any) return;
-    const worldW = maxX - minX;
-    const worldH = maxY - minY;
-    if (!(worldW > 0) || !(worldH > 0)) return;
+    if (!(maxX > minX) || !(maxY > minY)) return null;
+    return { minX, minY, maxX, maxY };
+  }
+
+  /**
+   * True when the whole board is inside the viewport at the current camera (small margin).
+   * `widthOnly` ignores the vertical extent (M1 is framed on the squad, so its far edge may sit
+   * above the screen on purpose).
+   */
+  boardFits(map: GameMap, widthOnly = false): boolean {
+    this.syncMap(map);
+    const b = this.boardBounds(map);
+    if (!b) return true;
+    const z = this.cam.zoom;
+    const left = (b.minX - this.cam.x) * z + this.w / 2;
+    const right = (b.maxX - this.cam.x) * z + this.w / 2;
+    const top = (b.minY - this.cam.y) * z + this.h / 2;
+    const bottom = (b.maxY - this.cam.y) * z + this.h / 2;
+    const m = 4;
+    if (left < m || right > this.w - m) return false;
+    return widthOnly || (top >= m && bottom <= this.h - m);
+  }
+
+  /**
+   * Frame the whole board at the current yaw and pitch.
+   * Bounds are every tile's top corners (isoOf) plus the prism base (topMetrics.drop),
+   * so the lowest edge includes the slab under the front faces.
+   */
+  fitToMap(map: GameMap): void {
+    this.syncMap(map);
+    if (!(this.cam.zoom > 1e-4)) this.cam.zoom = 1;
+    const b = this.boardBounds(map);
+    if (!b) return;
+    const worldW = b.maxX - b.minX;
+    const worldH = b.maxY - b.minY;
     const fit = Math.min((this.w * 0.92) / worldW, (this.h * 0.85) / worldH);
-    this.cam.zoom = Math.min(1.8, Math.max(0.55, fit));
-    this.cam.x = (minX + maxX) / 2;
-    this.cam.y = (minY + maxY) / 2;
+    this.cam.zoom = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, fit));
+    this.cam.x = (b.minX + b.maxX) / 2;
+    this.cam.y = (b.minY + b.maxY) / 2;
   }
 
   draw(

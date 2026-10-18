@@ -234,7 +234,13 @@ export class Game {
     this.briefing.hidden = true;
     this.title.hidden = false;
 
-    window.addEventListener("resize", () => this.renderer.resize());
+    window.addEventListener("resize", () => {
+      const prevW = this.renderer.w;
+      this.renderer.resize();
+      // A width change (window resize, phone rotation) re-frames the board if it no longer fits.
+      // Height-only changes (mobile URL bar) leave the camera alone.
+      if (Math.abs(this.renderer.w - prevW) > 1 && this.inBattleView() && !this.renderer.boardFits(this.map, this.missionIndex === 0)) this.frameBoard();
+    });
     el<HTMLButtonElement>("btn-start").addEventListener("click", () => this.begin());
     el<HTMLButtonElement>("btn-restart").addEventListener("click", () => this.restart());
     this.btnNext.addEventListener("click", () => this.nextMission());
@@ -654,7 +660,7 @@ export class Game {
     this.log = "點選單位開始行動。可先攻擊或待機，不必先移動。拖曳平移，雙指縮放並旋轉，上下俯仰。";
     this.renderer.yaw = 0;
     this.renderer.setPitch(PITCH_DEFAULT);
-    this.renderer.centerOn(this.units, this.map);
+    this.frameBoard();
     this.fillBriefing();
   }
 
@@ -678,6 +684,22 @@ export class Game {
     this.applySave(s);
   }
 
+  /**
+   * Mission-start camera. M1 stays centred on the squad at 0.7 (until the #9 background art lands)
+   * when the whole board fits; on a narrow screen, and on every other mission, frame the board.
+   */
+  private frameBoard(): void {
+    if (this.missionIndex === 0) {
+      this.renderer.centerOn(this.units, this.map);
+      if (this.renderer.boardFits(this.map, true)) return;
+    }
+    this.renderer.fitToMap(this.map);
+  }
+
+  private inBattleView(): boolean {
+    return this.title.hidden && this.briefing.hidden && this.phase !== "title" && this.phase !== "briefing";
+  }
+
   private async begin(): Promise<void> {
     this.missionStartInventory = cloneInventory(this.inventory);
     this.briefing.hidden = true;
@@ -686,9 +708,7 @@ export class Game {
     audio.setBgm("battle");
     // Before the intro, so the board behind the dialogue is already the scenario.
     this.applyDebugBattleScenario();
-    // M1 stays at 0.7 until the #9 background art lands.
-    if (this.missionIndex === 0) this.renderer.centerOn(this.units, this.map);
-    else this.renderer.fitToMap(this.map);
+    this.frameBoard();
     this.busy = !this.introPlayed.has(this.missionIndex);
     this.syncUi();
     this.autosave();
