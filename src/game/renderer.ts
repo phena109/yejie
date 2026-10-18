@@ -2489,7 +2489,7 @@ export class Renderer {
     if (dim) this.withActedBody(drawBody);
     else drawBody();
 
-    this.drawFacingWedge(u, map, x, feetY, z);
+    this.drawFacingWedge(u, map, z, accent, overlays.selected?.id === u.id);
 
     ctx.restore();
 
@@ -3069,44 +3069,44 @@ export class Renderer {
     ctx.restore();
   }
 
-  private drawFacingWedge(u: Unit, map: GameMap, x: number, feetY: number, z: number): void {
+  /**
+   * Ground facing chevron, in the 0.2.1/0.6.1 spirit: a dark-outlined arrowhead in the unit's colour.
+   * The bodies grew taller than the 0.6.1 rigs and hid the old 0.11-tile wedge under their feet, so the
+   * chevron now sits just outside the ring and is drawn over the body. Projected on the ground plane, so
+   * it follows yaw and pitch. The selected unit gets a bigger, fully opaque one with a light rim.
+   */
+  private drawFacingWedge(u: Unit, map: GameMap, z: number, accent: string, selected: boolean): void {
     const ctx = this.ctx;
     const h = map.heightAt(u.x, u.y);
     const project = this.projectAt(u.x, u.y, h, u.dir, map);
-    const tip = [
-      project(0, 0.11, 0.03),
-      project(-0.035, 0.04, 0.03),
-      project(0.035, 0.04, 0.03),
-    ];
-    const body = [
-      project(-0.04, 0.035, 0.018),
-      project(0.04, 0.035, 0.018),
-      project(0.05, -0.045, 0.018),
-      project(0, -0.015, 0.018),
-      project(-0.05, -0.045, 0.018),
-    ];
+    const k = selected ? 1.3 : 1;
+    // Same ground line as the ring under the feet (ground + FEET_DROP + RING_DROP), starting past its rim.
+    const drop = (FEET_DROP + RING_DROP) * z;
+    const r0 = 0.42;
+    const pts = [
+      project(0, r0 + 0.27 * k, 0),
+      project(-0.17 * k, r0, 0),
+      project(0, r0 + 0.08 * k, 0),
+      project(0.17 * k, r0, 0),
+    ].map((q) => ({ x: q.x, y: q.y + drop }));
+    ctx.save();
+    ctx.globalAlpha = selected ? 1 : 0.88;
     ctx.beginPath();
-    ctx.moveTo(body[0].x, body[0].y);
-    for (let i = 1; i < body.length; i++) ctx.lineTo(body[i].x, body[i].y);
+    ctx.moveTo(pts[0].x, pts[0].y);
+    for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y);
     ctx.closePath();
     ctx.lineJoin = "round";
-    ctx.strokeStyle = "rgba(6,8,14,0.95)";
-    ctx.lineWidth = Math.max(1.6, 1.8 * z);
+    ctx.strokeStyle = "rgba(6,6,10,0.95)";
+    ctx.lineWidth = Math.max(2.4, 2.8 * z) * (selected ? 1.15 : 1);
     ctx.stroke();
-    ctx.fillStyle = "#5a88c8";
+    ctx.fillStyle = accent;
     ctx.fill();
-
-    ctx.beginPath();
-    ctx.moveTo(tip[0].x, tip[0].y);
-    ctx.lineTo(tip[1].x, tip[1].y);
-    ctx.lineTo(tip[2].x, tip[2].y);
-    ctx.closePath();
-    ctx.strokeStyle = "rgba(6,8,14,0.95)";
-    ctx.stroke();
-    ctx.fillStyle = "#ff9a3c";
-    ctx.fill();
-    void x;
-    void feetY;
+    if (selected) {
+      ctx.strokeStyle = "rgba(255,255,255,0.9)";
+      ctx.lineWidth = Math.max(1, 1.1 * z);
+      ctx.stroke();
+    }
+    ctx.restore();
   }
 
   private drawVignette(): void {
