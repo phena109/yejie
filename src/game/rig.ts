@@ -131,7 +131,9 @@ function hairDelinquent(head: THREE.Group, m: Mats, r: number): void {
 
 function hair(head: THREE.Group, m: Mats, a: Archetype, g: Gender, r: number): void {
   if (a === "mara") hairMara(head, m, r); else if (a === "dana") hairDana(head, m, r); else if (a === "priya") hairPriya(head, m, r); else if (a === "delinquent") hairDelinquent(head, m, r); else hairGeneric(head, m, g, r);
-  if (a === "crosby") { const hood = sphere(m.shirt, r * 1.22, 24, 18); hood.scale.set(1.04, 0.92, 1.04); add(head, hood, 0, 0, -r * 0.12); }
+  // The hood sits behind the face so eyes and mouth stay visible: it used to be centred almost on the head
+  // (front edge 1.15r, eyes at 0.89r), which swallowed the face and made Crosby read as "back" from every angle.
+  if (a === "crosby") { const hood = sphere(m.shirt, r * 1.22, 24, 18); hood.scale.set(1.04, 0.92, 1.04); add(head, hood, 0, r * 0.04, -r * 0.42); }
   if (a === "magician") { add(head, new THREE.Mesh(new THREE.CylinderGeometry(r * 1.25, r * 1.25, 0.08, 24), m.accent), 0, r * 0.86, 0); add(head, cone(m.shirt, r * 0.65, r), 0, r * 1.22, 0); }
   if (a === "worker") { const helm = sphere(m.accent, r * 1.16, 24, 18); helm.scale.set(1.05, 0.42, 1.05); add(head, helm, 0, r * 0.77, 0); add(head, box(m.accent, r * 1.35, 0.06, r * 0.55), 0, r * 0.67, r * 0.42); }
 }
