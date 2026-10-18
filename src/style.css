@@ -98,6 +98,26 @@ body {
   display: none;
 }
 
+/* Narrow or short screens (phones, zoomed browsers): the full chip covered most of the board. Show it
+   compact (name, one stats line, HP) and let a tap expand it to the full chip again. */
+@media (max-width: 520px), (max-height: 480px) {
+  #unit-chip { cursor: pointer; }
+  #unit-chip:not(.open) { padding: 4px 26px 5px 8px; gap: 8px; }
+  #unit-chip:not(.open) #chip-mark { width: 6px; height: 24px; }
+  #unit-chip:not(.open) #chip-name { font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #unit-chip:not(.open) #chip-meta { margin-top: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #unit-chip:not(.open) #chip-extra { display: none; }
+  #unit-chip:not(.open) #chip-hp { margin-top: 3px; height: 4px; }
+  #unit-chip::after { content: "▾"; position: absolute; right: 9px; top: 50%; transform: translateY(-50%); color: var(--muted); font-size: 12px; }
+  #unit-chip.open::after { content: "▴"; }
+}
+/* Short screens: the corner stacks (背包/旋轉, 暫停/結束回合) reach the top, so the compact chip (name and HP
+   only until tapped) sits in the centre column between them, like #log and #forecast. */
+@media (max-height: 480px) {
+  #unit-chip:not(.open) { left: 88px; right: 88px; max-width: 360px; margin: 0 auto; top: calc(env(safe-area-inset-top) + var(--hud-h) + 2px); }
+  #unit-chip:not(.open) #chip-meta { display: none; }
+}
+
 #chip-mark {
   width: 10px;
   height: 36px;

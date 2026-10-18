@@ -292,6 +292,8 @@ export class Game {
     el<HTMLButtonElement>("btn-new").addEventListener("click", () => this.newGame());
     this.btnContinue.addEventListener("click", () => this.continueGame());
     el<HTMLButtonElement>("btn-load").addEventListener("click", () => this.openSaves("load"));
+    // Narrow or short screens show the unit chip compact (name + HP); tapping it expands the full stats.
+    this.chip.addEventListener("click", () => this.chip.classList.toggle("open"));
     el<HTMLButtonElement>("btn-bag-title").addEventListener("click", () => this.openBag());
     el<HTMLButtonElement>("btn-refresh").addEventListener("click", () => void this.refreshApp());
     el<HTMLButtonElement>("btn-brief-title").addEventListener("click", () => this.goTitle());
