@@ -2489,8 +2489,6 @@ export class Renderer {
     if (dim) this.withActedBody(drawBody);
     else drawBody();
 
-    this.drawFacingWedge(u, map, z, accent, overlays.selected?.id === u.id);
-
     ctx.restore();
 
     if (done) {
@@ -2711,6 +2709,9 @@ export class Renderer {
     }
 
     for (let i = 0; i < n; i++) this.paintUnitRing(pool[i]);
+    // Facing chevrons paint with the rings, after every tile: drawn inside the cell loop, a chevron that
+    // points toward the viewer (旋轉 2/3 at M1 start) lands on the next tile and that tile covered it.
+    for (let i = 0; i < n; i++) this.drawFacingWedge(drawn[i], map, z, factionColor(drawn[i]), overlays.selected?.id === drawn[i].id);
     for (let i = 0; i < n; i++) this.paintUnitLabel(pool[i]);
     this.paintStatusIcons();
 
