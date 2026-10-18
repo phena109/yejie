@@ -1428,7 +1428,8 @@ export class Game {
     }
     const target = f.target;
     if (target.stance === "neutral" && !f.heal) provoke(target);
-    actor.dir = dirFromTo(actor, target);
+    // A self-target (self heal) keeps the current facing instead of snapping to a fixed dir.
+    if (target.x !== actor.x || target.y !== actor.y) actor.dir = dirFromTo(actor, target);
     const magic = f.kind === "skill" && (actor.skillKind === "spark" || actor.skillKind === "heal" || actor.skillKind === "halt");
     actor.anim = magic ? "cast" : "attack";
     actor.animStart = performance.now();
@@ -1551,7 +1552,7 @@ export class Game {
       e.anim = "idle";
       this.tryPickup(e);
       if (plan.target && !plan.target.dead) {
-        e.dir = dirFromTo(e, plan.target);
+        if (plan.target.x !== e.x || plan.target.y !== e.y) e.dir = dirFromTo(e, plan.target);
         const f = plan.useSkill && !e.skillUsed
           ? makeSkillForecast(e, plan.target, this.map)
           : makeAttackForecast(e, plan.target, this.map);
