@@ -116,6 +116,8 @@ const PROP_LABEL: Record<NonNullable<Tile["prop"]>, string> = {
 
 const STANCE_LABEL = { friendly: "友方", hostile: "敵對", neutral: "中立" };
 
+const VN_TAP_GUARD_MS = 450;
+
 export class Game {
   map: GameMap;
   units: Unit[] = [];
@@ -186,6 +188,8 @@ export class Game {
   private skillPressed = false;
   /** A pointer press already advanced the VN; the click of the same gesture is ignored. */
   private vnPressed = false;
+  /** When the last dialogue line closed; board taps just after it are a double-tap on the box, not a move. */
+  private vnClosedAt = -1e9;
   private btnConfirm = el<HTMLButtonElement>("btn-confirm");
   private dockEl = el<HTMLElement>("dock");
   private btnEnd = el<HTMLButtonElement>("btn-end");
@@ -653,6 +657,7 @@ export class Game {
     this.vnDone = null;
     this.vnOpen = false;
     this.vn.hidden = true;
+    this.vnClosedAt = performance.now();
     this.vnBust.onerror = null;
     this.vnBust.removeAttribute("src");
     done();
@@ -1083,6 +1088,9 @@ export class Game {
 
   private onTap(p: Vec2, client: Vec2): void {
     if (this.pauseOpen || this.vnOpen) return;
+    // A quick extra tap on the dialogue box as it closes lands on the board; drop it so it cannot
+    // deselect or move the unit the scene just selected (Mara in ?scenario=flank).
+    if (performance.now() - this.vnClosedAt < VN_TAP_GUARD_MS) return;
     // 確認 is consumed here and must not also dismiss or retarget.
     if (this.pointInEl(client, this.btnConfirm)) {
       this.pressConfirm();
