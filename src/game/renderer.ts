@@ -2429,7 +2429,9 @@ export class Renderer {
     const ctx = this.ctx;
     const { x, feetY, z, scale, dh, dx, dy, ground: p, elite } = this.unitPose(u, map);
     const accent = factionColor(u);
-    const done = u.acted;
+    // Idle escorts (Rowan in M2, Sam in M3, Marla in M5) are created with acted set so they never take a
+    // turn; they have no action to finish, so they get no action-done E icon.
+    const done = u.acted && !(u.npc && u.behaviour === "idle");
     // Idle NPCs are created with acted set, and enemies flip it during their phase.
     // Dim only the body of a player-controlled unit that has finished acting.
     const dim = isPlayerControlled(u) && u.acted;
