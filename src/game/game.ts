@@ -1705,7 +1705,12 @@ export class Game {
    */
   private applyDebugBattleScenario(): void {
     if (!this.debugHooksEnabled()) return;
-    if (new URLSearchParams(location.search).get("scenario") !== "heal") return;
+    const scenario = new URLSearchParams(location.search).get("scenario");
+    if (scenario === "flank") {
+      this.applyFlankScenario();
+      return;
+    }
+    if (scenario !== "heal") return;
     if (this.mission.id !== "m1" || this.phase !== "select") return;
     const priya = this.units.find((u) => u.id === "priya");
     const mara = this.units.find((u) => u.id === "mara");
@@ -1739,6 +1744,50 @@ export class Game {
     }
     this.renderer.centerOn(this.units, this.map);
     this.selectUnit(priya);
+  }
+
+  /**
+   * Mission 1 player's turn, `?debug=1&scenario=flank` only (or `?scenario=flank` on the dev server).
+   * Pike stands on the flat south street at (5, 10) facing N (up-right on screen at the default
+   * camera; his ground chevron shows it). Mara is on his W flank at (4, 10), so 重擊 on Pike previews
+   * 側面 +25%; Dana is behind him at (5, 11), so her attack previews 背面 +50%. Priya waits at (7, 11).
+   * Pike is at full HP so either preview can be confirmed first; a hit never turns the target, so the
+   * other arc still applies after it. Mara is selected. No effect elsewhere or without the debug gate.
+   */
+  private applyFlankScenario(): void {
+    if (this.mission.id !== "m1" || this.phase !== "select") return;
+    const pike = this.units.find((u) => u.id === "e4");
+    const mara = this.units.find((u) => u.id === "mara");
+    const dana = this.units.find((u) => u.id === "dana");
+    const priya = this.units.find((u) => u.id === "priya");
+    if (!pike || !mara || !dana || !priya) return;
+    const place: Array<[Unit, number, number]> = [
+      [pike, 5, 10],
+      [mara, 4, 10],
+      [dana, 5, 11],
+      [priya, 7, 11],
+    ];
+    const ids = new Set(place.map(([u]) => u.id));
+    for (const [, x, y] of place) {
+      const tile = this.map.tile(x, y);
+      if (!tile || tile.h !== 0 || !this.map.walkable(x, y)) return;
+      if (this.units.some((u) => !u.dead && !ids.has(u.id) && u.x === x && u.y === y)) return;
+    }
+    for (const [u, x, y] of place) {
+      u.x = x;
+      u.y = y;
+      u.dead = false;
+      u.acted = false;
+      u.skillUsed = false;
+      u.movedThisTurn = false;
+      u.actedThisTurn = false;
+    }
+    pike.dir = 0;
+    pike.hp = pike.maxHp;
+    mara.dir = 1;
+    dana.dir = 0;
+    this.renderer.centerOn(this.units, this.map);
+    this.selectUnit(mara);
   }
 
   /**
