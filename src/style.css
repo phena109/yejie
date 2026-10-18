@@ -114,8 +114,16 @@ body {
 /* Short screens: the corner stacks (背包/旋轉, 暫停/結束回合) reach the top, so the compact chip (name and HP
    only until tapped) sits in the centre column between them, like #log and #forecast. */
 @media (max-height: 480px) {
-  #unit-chip:not(.open) { left: 88px; right: 88px; max-width: 360px; margin: 0 auto; top: calc(env(safe-area-inset-top) + var(--hud-h) + 2px); }
+  #unit-chip:not(.open) { left: 88px; right: 100px; max-width: 360px; margin: 0 auto; top: calc(env(safe-area-inset-top) + var(--hud-h) + 2px); }
   #unit-chip:not(.open) #chip-meta { display: none; }
+  /* Expanded too: stay in the centre column (scrolling if it must) so 背包/旋轉/暫停/結束回合 stay uncovered. */
+  #unit-chip.open {
+    left: 88px; right: 100px; max-width: 420px; margin: 0 auto; top: calc(env(safe-area-inset-top) + var(--hud-h) + 2px);
+    max-height: calc(100dvh - var(--hud-h) - var(--dock-h) - env(safe-area-inset-top) - env(safe-area-inset-bottom) - 8px);
+    overflow-y: auto; align-items: flex-start;
+  }
+  /* The gesture hint sits at the chip's height on short screens; hide it while a unit is shown. */
+  #unit-chip:not([hidden]) ~ #cam-hint { visibility: hidden; }
 }
 
 #chip-mark {
