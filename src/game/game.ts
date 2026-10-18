@@ -182,6 +182,10 @@ export class Game {
   private btnCancel = el<HTMLButtonElement>("btn-cancel");
   private btnWait = el<HTMLButtonElement>("btn-wait");
   private btnSkill = el<HTMLButtonElement>("btn-skill");
+  /** A pointer press already armed 技能; the click of the same gesture is ignored. */
+  private skillPressed = false;
+  /** A pointer press already advanced the VN; the click of the same gesture is ignored. */
+  private vnPressed = false;
   private btnConfirm = el<HTMLButtonElement>("btn-confirm");
   private dockEl = el<HTMLElement>("dock");
   private btnEnd = el<HTMLButtonElement>("btn-end");
@@ -246,7 +250,20 @@ export class Game {
     this.btnNext.addEventListener("click", () => this.nextMission());
     this.btnCancel.addEventListener("click", () => this.cancel());
     this.btnWait.addEventListener("click", () => void this.wait());
-    this.btnSkill.addEventListener("click", () => this.armSkill());
+    // Arm on press, like 確認: a click needs press and release on the same element, and the dock
+    // can reflow under the pointer when selecting a unit rewrites the hint line, which dropped the
+    // first 技能 press. The click that follows is then ignored; keyboard / element.click() still arm.
+    this.btnSkill.addEventListener("pointerdown", (e) => {
+      if (e.button !== 0) return;
+      this.skillPressed = true;
+      this.armSkill();
+    });
+    this.btnSkill.addEventListener("click", (e) => {
+      const pressed = this.skillPressed;
+      this.skillPressed = false;
+      if (pressed && e.detail !== 0) return;
+      this.armSkill();
+    });
     this.btnConfirm.addEventListener("pointerdown", (e) => {
       if (e.button !== 0) return;
       e.stopPropagation();
@@ -284,7 +301,20 @@ export class Game {
     el<HTMLButtonElement>("btn-pause-load").addEventListener("click", () => this.openSaves("load"));
     this.btnMute.addEventListener("click", () => this.toggleMute());
     this.btnPauseNext.addEventListener("click", () => this.requestNextMission());
-    this.vn.addEventListener("click", () => this.advanceVn());
+    // Advance on press: a click is lost when press and release land on different nodes (the
+    // box re-lays out at narrow widths as the text changes). The click from the same gesture is
+    // swallowed so it cannot skip the next line; keyboard / element.click() (detail 0) still advance.
+    this.vn.addEventListener("pointerdown", (e) => {
+      if (e.button !== 0 || !this.vnDone) return;
+      this.vnPressed = true;
+      this.advanceVn();
+    });
+    this.vn.addEventListener("click", (e) => {
+      const pressed = this.vnPressed;
+      this.vnPressed = false;
+      if (pressed && e.detail !== 0) return;
+      this.advanceVn();
+    });
     this.vn.addEventListener("keydown", (e) => {
       if (e.key === "Enter" || e.key === " ") {
         e.preventDefault();
