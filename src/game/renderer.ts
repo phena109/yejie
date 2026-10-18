@@ -2,7 +2,7 @@ import type { GameMap, MapTheme } from "./map";
 import type { BoardObj } from "./objects";
 import { CHAR_H, drawRig, localToGrid, rigDrawHeight, type ProjectFn, type RigBillboard } from "./rig";
 import type { Dir, FloatText, Phase, Tile, Unit, Vec2 } from "./types";
-import { DIRS, factionColor, isPlayerControlled, key, nextYaw, yawDir, yawPoint } from "./types";
+import { dirVector, factionColor, isPlayerControlled, key, nextYaw, yawDir, yawPoint } from "./types";
 
 /** Diamond width at 45° yaw. Height and block scale with pitch. */
 export const TILE_W = 64;
@@ -578,7 +578,84 @@ const LABEL_NUDGE_CAP = 24;
 const LABEL_LIFT_CAP = 20;
 /** Draw a leader once a plate has left its anchor by more than this many screen pixels. */
 const LABEL_LEADER_MIN = 8;
-const MAP_ANGLES = ["front", "ne", "right", "se", "back", "sw", "left", "nw"] as const;
+type PaintedAngle = "front" | "ne" | "right" | "se" | "back" | "sw" | "left" | "nw";
+/**
+ * Painted map art, indexed by screen sector (see screenSector): 0 toward the viewer, then clockwise
+ * on screen: 1 down-left, 2 left, 3 up-left, 4 away, 5 up-right, 6 right, 7 down-right.
+ * Each entry is the file that actually shows that view (checked by eye, 19 Oct): the file names do
+ * not follow grid compass points. Mara: ne = 3/4 front looking right, nw = 3/4 front looking left,
+ * se = 3/4 back turned left, sw = 3/4 back turned right. Dana: ne looks left, nw looks right, and
+ * both se and sw are 3/4 back turned right, so up-left mirrors sw.
+ */
+const PAINTED_BY_SECTOR: Record<"mara" | "dana", ReadonlyArray<readonly [PaintedAngle, boolean]>> = {
+  mara: [["front", false], ["nw", false], ["left", false], ["se", false], ["back", false], ["sw", false], ["right", false], ["ne", false]],
+  dana: [["front", false], ["ne", false], ["left", false], ["sw", true], ["back", false], ["se", false], ["right", false], ["nw", false]],
+};
+/** Priya's single painting is a 3/4 front view looking down-left; mirror it for right-facing sectors. */
+const PRIYA_MIRROR_SECTORS = new Set([5, 6, 7]);
+const SCREEN_SECTORS = 8;
+
+/**
+ * Some painted map files have no alpha (a flat dark backdrop). Flood-fill from the border and clear
+ * every connected pixel within BACKDROP_TOL of the median border colour, then swap the cleaned
+ * pixels back into the same <img>. Images that already have transparent corners are left alone.
+ */
+const BACKDROP_TOL = 9;
+function keyOpaqueBackdrop(img: HTMLImageElement): void {
+  if (img.dataset.keyed || typeof document === "undefined") return;
+  img.dataset.keyed = "1";
+  const w = img.naturalWidth;
+  const h = img.naturalHeight;
+  if (!(w > 2 && h > 2)) return;
+  const c = document.createElement("canvas");
+  c.width = w;
+  c.height = h;
+  const g = c.getContext("2d", { willReadFrequently: true });
+  if (!g) return;
+  g.drawImage(img, 0, 0);
+  let data: ImageData;
+  try {
+    data = g.getImageData(0, 0, w, h);
+  } catch {
+    return;
+  }
+  const px = data.data;
+  if (px[3] < 250 && px[(w * h - 1) * 4 + 3] < 250) return;
+  const border: number[][] = [[], [], []];
+  const pushB = (i: number): void => {
+    for (let k = 0; k < 3; k++) border[k].push(px[i * 4 + k]);
+  };
+  for (let x = 0; x < w; x++) {
+    pushB(x);
+    pushB((h - 1) * w + x);
+  }
+  for (let y = 0; y < h; y++) {
+    pushB(y * w);
+    pushB(y * w + w - 1);
+  }
+  const bg = border.map((a) => a.sort((p, q) => p - q)[a.length >> 1]);
+  const near = (i: number): boolean =>
+    Math.abs(px[i * 4] - bg[0]) <= BACKDROP_TOL &&
+    Math.abs(px[i * 4 + 1] - bg[1]) <= BACKDROP_TOL &&
+    Math.abs(px[i * 4 + 2] - bg[2]) <= BACKDROP_TOL;
+  const seen = new Uint8Array(w * h);
+  const stack: number[] = [];
+  for (let x = 0; x < w; x++) stack.push(x, (h - 1) * w + x);
+  for (let y = 0; y < h; y++) stack.push(y * w, y * w + w - 1);
+  while (stack.length) {
+    const i = stack.pop() as number;
+    if (seen[i] || !near(i)) continue;
+    seen[i] = 1;
+    px[i * 4 + 3] = 0;
+    const x = i % w;
+    if (x > 0) stack.push(i - 1);
+    if (x < w - 1) stack.push(i + 1);
+    if (i >= w) stack.push(i - w);
+    if (i < w * (h - 1)) stack.push(i + w);
+  }
+  g.putImageData(data, 0, 0);
+  img.src = c.toDataURL("image/png");
+}
 
 function unitDrawHeight(zoom: number, elite: boolean): number {
   return rigDrawHeight(zoom) * (elite ? ELITE_SCALE : 1);
@@ -720,6 +797,8 @@ export class Renderer {
     }
     for (const [angle, image] of Object.entries(this.danaAngles)) {
       image.decoding = "async";
+      // Dana's four diagonal paintings are opaque RGB on a navy backdrop; clear it once loaded.
+      image.addEventListener("load", () => keyOpaqueBackdrop(image));
       image.src = `./sprites/dana-${angle}.png`;
     }
     this.resize();
@@ -2089,7 +2168,8 @@ export class Renderer {
     const z = this.cam.zoom;
     const elite = u.role === "elite";
     const mul = elite ? ELITE_SCALE : 1;
-    const face = yawDir(DIRS[u.dir].x, DIRS[u.dir].y, this.yaw);
+    const f = dirVector(u.dir);
+    const face = yawDir(f.x, f.y, this.yaw);
     const lunge = u.lunge || 0;
     const dx = (face.x - face.y) * 6 * z * lunge;
     const dy = (face.x + face.y) * 3 * z * lunge;
@@ -2272,13 +2352,11 @@ export class Renderer {
     x: number,
     feetY: number,
     z: number,
-    face: Vec2,
     elite: boolean,
-    mirror = true,
+    mirrored: boolean,
   ): void {
     const dh = unitDrawHeight(z, elite);
     const dw = dh * image.naturalWidth / image.naturalHeight;
-    const mirrored = mirror && face.x - face.y < 0;
     const ctx = this.ctx;
     ctx.save();
     ctx.translate(x - dw / 2, feetY - dh);
@@ -2300,9 +2378,25 @@ export class Renderer {
     });
   }
 
+  /**
+   * Which way a unit's facing points on screen, as one of 8 sectors: 0 toward the viewer (screen
+   * down), then clockwise on screen (1 down-left, 2 left, 3 up-left, 4 away, 5 up-right, 6 right,
+   * 7 down-right). Uses the ground-plane heading after the camera yaw, so tilt does not change it.
+   * For quarter-turn 旋轉 this equals (dir * 8 / DIR_COUNT + 5 - 2 * quarterTurns) mod 8.
+   */
+  screenSector(u: Unit): number {
+    const f = dirVector(u.dir);
+    const r = yawDir(f.x, f.y, this.yaw);
+    const sx = r.x - r.y;
+    const sy = r.x + r.y;
+    const a = Math.atan2(-sx, sy);
+    const i = Math.round((a / (Math.PI * 2)) * SCREEN_SECTORS);
+    return ((i % SCREEN_SECTORS) + SCREEN_SECTORS) % SCREEN_SECTORS;
+  }
+
   private drawUnit(u: Unit, map: GameMap, overlays: DrawOverlays): void {
     const ctx = this.ctx;
-    const { x, feetY, z, scale, dh, dx, dy, ground: p, face, elite } = this.unitPose(u, map);
+    const { x, feetY, z, scale, dh, dx, dy, ground: p, elite } = this.unitPose(u, map);
     const accent = factionColor(u);
     const done = u.acted;
     // Idle NPCs are created with acted set, and enemies flip it during their phase.
@@ -2335,27 +2429,27 @@ export class Renderer {
         const q = project(lx, ly, lz);
         return { x: q.x + dx, y: q.y + dy, d: q.d };
       };
-      // Mara and Dana: painted 8-dir map sprites. Priya: authored sprite billboard.
-      // The glTF Mara portrait stays off the map (it filled part of the billboard and read as navy-on-dark).
-      // Grid facing: 0 N/front, 1 NE, 2 E/right, 3 SE, 4 S/back, 5 SW, 6 W/left, 7 NW.
+      // Mara and Dana: 8 painted views; Priya: one painting, mirrored. The view is picked from the
+      // unit's world heading minus the camera yaw, so body and ground chevron agree at any 旋轉 or twist.
+      const sector = this.screenSector(u);
       if (u.archetype === "mara" || u.archetype === "dana") {
         const angles = u.archetype === "mara" ? this.maraAngles : this.danaAngles;
-        const painted = angles[MAP_ANGLES[u.dir]];
+        const [name, mirror] = PAINTED_BY_SECTOR[u.archetype][sector];
+        const painted = angles[name];
         const fallback = this.mapDolls[u.archetype];
         if (painted.complete && painted.naturalWidth > 0 && painted.naturalHeight > 0) {
-          this.drawMapDoll(u.id, painted, x, feetY, z, face, elite, false);
+          this.drawMapDoll(u.id, painted, x, feetY, z, elite, mirror);
         } else if (fallback.complete && fallback.naturalWidth > 0 && fallback.naturalHeight > 0) {
-          this.drawMapDoll(u.id, fallback, x, feetY, z, face, elite, false);
+          this.drawMapDoll(u.id, fallback, x, feetY, z, elite, false);
         } else {
-          this.rememberRig(u.id, drawRig(ctx, shifted, u, this.time, z, this.yaw));
+          this.rememberRig(u.id, drawRig(ctx, shifted, u, this.time, z, this.yaw, this.pitch));
         }
       } else {
-        // Priya remains the single authored sprite billboard.
         const doll = u.archetype === "priya" ? this.mapDolls.priya : null;
         if (doll && doll.complete && doll.naturalWidth > 0 && doll.naturalHeight > 0) {
-          this.drawMapDoll(u.id, doll, x, feetY, z, face, elite);
+          this.drawMapDoll(u.id, doll, x, feetY, z, elite, PRIYA_MIRROR_SECTORS.has(sector));
         } else {
-          this.rememberRig(u.id, drawRig(ctx, shifted, u, this.time, z, this.yaw));
+          this.rememberRig(u.id, drawRig(ctx, shifted, u, this.time, z, this.yaw, this.pitch));
         }
       }
     };

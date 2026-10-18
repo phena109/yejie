@@ -1,6 +1,6 @@
 import * as THREE from "three";
 import type { AnimClip, Archetype, Dir, Gender, Unit } from "./types";
-import { dirAngle as gridDirAngle, dirVector } from "./types";
+import { dirVector } from "./types";
 import { buildMaraSoft } from "./maraSoft";
 
 export interface Proj { x: number; y: number; d: number }
@@ -238,27 +238,40 @@ function ensureGL(): boolean {
     scene = new THREE.Scene(); const aspect = 192 / 240; camera = new THREE.OrthographicCamera(-1.35 * aspect, 1.35 * aspect, 1.35, -1.35, 0.1, 40); stage = new THREE.Group(); scene.add(stage); scene.add(new THREE.HemisphereLight(0xfff3df, 0x222844, 1.35)); const key = new THREE.DirectionalLight(0xffe7c7, 1.7); key.position.set(3.5, 6, 4.5); scene.add(key); const fill = new THREE.DirectionalLight(0x93b5ff, 0.65); fill.position.set(-4, 2, -3); scene.add(fill); glReady = true; return true;
   } catch { return false; }
 }
-function dirAngle(dir: Dir): number { return gridDirAngle(dir); }
 const PORTRAIT_PITCH = 30;
-function placeCamera(yaw: number, pitchDeg: number): void { if (!camera) return; const pitch = pitchDeg * Math.PI / 180; const d = 4.2; const cp = Math.cos(pitch); const sp = Math.sin(pitch); camera.position.set(Math.sin(yaw) * cp * d, sp * d + 0.85, Math.cos(yaw) * cp * d); camera.lookAt(0, 0.88, 0); camera.updateProjectionMatrix(); }
-export function drawRig(ctx: CanvasRenderingContext2D, project: ProjectFn, u: Unit, now: number, zoom: number, camYaw = 0): RigBillboard | null {
-  // The portrait is a fixed-size billboard. Projected crown/feet distance changes with map pitch.
+function placeCamera(yaw: number, pitchDeg: number): void { if (!camera) return; const pitch = pitchDeg * Math.PI / 180; const d = 4.2; const cp = Math.cos(pitch); const sp = Math.sin(pitch); camera.position.set(Math.sin(yaw) * cp * d, sp * d + 0.85, Math.cos(yaw) * cp * d); camera.lookAt(0, 0.88, 0); camera.updateProjectionMatrix(); camera.updateMatrixWorld(); }
+/** Where the feet (rig origin) land in the portrait, as a fraction of its height from the top. */
+function feetFraction(): number { if (!camera) return 0.88; const v = new THREE.Vector3(0, 0, 0).project(camera); return (1 - v.y) / 2; }
+let refFeet = -1;
+/**
+ * Rig world frame: grid x = three +X, grid y = three +Z, so headings agree with the map.
+ * The map camera at yaw 0 looks from grid (1, 1) (screen down = toward the viewer); twisting the
+ * map by `yaw` moves that viewpoint to three-yaw PI/4 - yaw. Facing `dir` points the model's +Z
+ * face along dirVector(dir), so the body always agrees with the world-projected ground chevron.
+ */
+export function rigHeading(dir: Dir): number { const f = dirVector(dir); return Math.atan2(f.x, f.y); }
+export function rigCameraYaw(mapYaw: number): number { return Math.PI / 4 - mapYaw; }
+export function drawRig(ctx: CanvasRenderingContext2D, project: ProjectFn, u: Unit, now: number, zoom: number, camYaw = 0, camPitch = PORTRAIT_PITCH): RigBillboard | null {
+  // The portrait is a fixed-size billboard (0.6.2 size lock): blit height follows zoom only.
   const feet = project(0, 0, 0); const scrH = rigDrawHeight(zoom) * (u.role === "elite" ? 1.12 : 1); const scrW = scrH * 192 / 240;
-  const destX = feet.x - scrW * 0.5; const destY = feet.y - scrH * 0.88;
+  const destX = feet.x - scrW * 0.5; let destY = feet.y - scrH * 0.88;
   if (!ensureGL() || !renderer || !scene || !camera || !stage) {
     const stand = ellipseBillboard(scrW, scrH);
     ctx.save(); ctx.drawImage(stand, destX, destY, scrW, scrH); ctx.restore();
     return { source: stand, x: destX, y: destY, w: scrW, h: scrH };
   }
+  if (refFeet < 0) { placeCamera(0, PORTRAIT_PITCH); refFeet = feetFraction(); }
   const t = template(u.archetype, u.gender); const active = activeClip(u, now); pose(t.parts, u.archetype, active.clip, active.t, now);
   while (stage.children.length) stage.remove(stage.children[0]); if (t.parts.root.parent) t.parts.root.parent.remove(t.parts.root); stage.add(t.parts.root);
-  // +Z is the model face; rotate it to the exact grid direction before projection.
-  // Grid facing only: model turns with u.dir. Portrait camera stays fixed so map yaw never spins the unit.
+  // +Z is the model face. The portrait camera orbits with the map yaw and tilts with the map pitch.
   // One template is shared per archetype+gender, so each call re-poses that mesh and must copy the canvas
   // before the next unit of the same archetype renders over it.
-  t.parts.root.rotation.set(0, dirAngle(u.dir), 0); placeCamera(0, PORTRAIT_PITCH); renderer.render(scene, camera);
+  t.parts.root.rotation.set(0, rigHeading(u.dir), 0); placeCamera(rigCameraYaw(camYaw), camPitch);
+  // Keep the feet on the tile when pitch moves them inside the portrait (same spot as at 30°).
+  destY += (refFeet - feetFraction()) * scrH;
+  renderer.render(scene, camera);
   const shot = portraitSnapshot(renderer.domElement);
-  ctx.save(); ctx.imageSmoothingEnabled = true; ctx.drawImage(shot, destX, destY, scrW, scrH); ctx.restore(); void camYaw;
+  ctx.save(); ctx.imageSmoothingEnabled = true; ctx.drawImage(shot, destX, destY, scrW, scrH); ctx.restore();
   return { source: shot, x: destX, y: destY, w: scrW, h: scrH };
 }
 export function precacheRigs(): void { if (!ensureGL()) return; const all: Archetype[] = ["mara", "dana", "priya", "hale", "crosby", "beckett", "delinquent", "magician", "wolverine", "boxer", "gunner", "worker", "official"]; for (const a of all) for (const g of ["f", "m"] as Gender[]) template(a, g); }
