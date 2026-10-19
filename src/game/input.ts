@@ -1,4 +1,4 @@
-import { ZOOM_MIN, type Renderer } from "./renderer";
+import type { Renderer } from "./renderer";
 import type { Vec2 } from "./types";
 
 export class PointerInput {
@@ -155,7 +155,7 @@ export class PointerInput {
     const cam = this.renderer.cam;
     const wx = cam.x + (sx - this.renderer.w / 2) / cam.zoom;
     const wy = cam.y + (sy - this.renderer.h / 2) / cam.zoom;
-    cam.zoom = Math.min(this.renderer.maxZoom(), Math.max(ZOOM_MIN, cam.zoom * factor));
+    cam.zoom = Math.min(this.renderer.maxZoom(), Math.max(this.renderer.minZoom(), cam.zoom * factor));
     cam.x = wx - (sx - this.renderer.w / 2) / cam.zoom;
     cam.y = wy - (sy - this.renderer.h / 2) / cam.zoom;
   }

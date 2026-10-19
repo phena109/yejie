@@ -16,7 +16,7 @@ export const BASE = 8;
 export const PITCH_MIN = 15;
 export const PITCH_MAX = 75;
 export const PITCH_DEFAULT = 30;
-/** Zoom-out floor shared by framing and pinch/wheel. 0.4 lets a ~360px phone see the whole M1 board. */
+/** Absolute zoom-out floor. 0.4 lets a ~360px phone see the whole M1 board. Pinch stops at minZoom(). */
 export const ZOOM_MIN = 0.4;
 /** Closest zoom on a short viewport. maxZoom() raises this until a character is half the screen tall. */
 export const ZOOM_MAX = 1.8;
@@ -791,6 +791,8 @@ export class Renderer {
   pitch = PITCH_DEFAULT;
   private mapW = 10;
   private mapH = 12;
+  /** Last map passed to syncMap. minZoom reads it so pinch can stop near the fitted board. */
+  private boardMap: GameMap | null = null;
   private readonly kingsWharf = new Image();
   /** M1 roof plate. `?bgslot` turns this off so the skyline slot can be previewed. */
   legacyPlate = true;
@@ -951,6 +953,7 @@ export class Renderer {
   private syncMap(map: GameMap): void {
     this.mapW = map.w;
     this.mapH = map.h;
+    this.boardMap = map;
   }
 
   isoOf(gx: number, gy: number, h = 0): Vec2 {
@@ -1422,6 +1425,32 @@ export class Renderer {
     return Math.min(ZOOM_CAP, Math.max(ZOOM_MAX, z));
   }
 
+  /** Zoom fitToMap would apply at the current yaw, pitch, and viewport. */
+  private fitZoom(): number | null {
+    const map = this.boardMap;
+    if (!map) return null;
+    const saved = this.cam.zoom;
+    if (!(saved > 1e-4)) this.cam.zoom = 1;
+    const b = this.boardBounds(map);
+    if (!(saved > 1e-4)) this.cam.zoom = saved;
+    if (!b) return null;
+    return this.zoomForBounds(b);
+  }
+
+  private zoomForBounds(b: { minX: number; minY: number; maxX: number; maxY: number }): number {
+    const worldW = b.maxX - b.minX;
+    const worldH = b.maxY - b.minY;
+    const fit = Math.min((this.w * 0.92) / worldW, (this.h * 0.85) / worldH);
+    return Math.min(this.maxZoom(), Math.max(ZOOM_MIN, fit));
+  }
+
+  /** Pinch and wheel stop here. 90% of the fitted zoom, clamped to ZOOM_MIN and maxZoom(). */
+  minZoom(): number {
+    const fit = this.fitZoom();
+    if (fit == null) return ZOOM_MIN;
+    return Math.min(this.maxZoom(), Math.max(ZOOM_MIN, 0.9 * fit));
+  }
+
   /**
    * Frame the whole board at the current yaw and pitch.
    * Bounds are every tile's top corners (isoOf) plus the prism base (topMetrics.drop),
@@ -1432,10 +1461,7 @@ export class Renderer {
     if (!(this.cam.zoom > 1e-4)) this.cam.zoom = 1;
     const b = this.boardBounds(map);
     if (!b) return;
-    const worldW = b.maxX - b.minX;
-    const worldH = b.maxY - b.minY;
-    const fit = Math.min((this.w * 0.92) / worldW, (this.h * 0.85) / worldH);
-    this.cam.zoom = Math.min(this.maxZoom(), Math.max(ZOOM_MIN, fit));
+    this.cam.zoom = this.zoomForBounds(b);
     this.cam.x = (b.minX + b.maxX) / 2;
     this.cam.y = (b.minY + b.maxY) / 2;
   }
