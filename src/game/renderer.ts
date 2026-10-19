@@ -115,7 +115,7 @@ export interface BodyStamp {
   mirror: boolean;
   /** Opaque figure on screen. The full stamp rect when the image has no bbox yet. */
   fig: ScreenRect;
-  /** "painted:<angle>", "doll", or "rig". */
+  /** "painted:<angle>", "doll", "rig", or "hero8:<sector>". */
   view: string;
 }
 
@@ -630,6 +630,17 @@ interface OpaqueBox {
   y1: number;
 }
 
+interface HeroFrame {
+  image: HTMLImageElement;
+  opaque: OpaqueBox;
+}
+
+/** One optional 8-angle set per heroine. Ready has no mirror flag: those files are never flipped. */
+type Hero8State =
+  | { kind: "absent" }
+  | { kind: "loading" }
+  | { kind: "ready"; views: readonly HeroFrame[]; figureH: number };
+
 /** One bbox per painted image. Null means the scan found no opaque pixel. */
 const opaqueBoxes = new WeakMap<HTMLImageElement, OpaqueBox | null>();
 
@@ -790,6 +801,11 @@ export class Renderer {
   private skylineSlideAt = 0;
   private skylineSlideSpan = 0;
   private skylineSlideReady = false;
+  private hero8: Record<HeroId, Hero8State> = {
+    mara: { kind: "loading" },
+    dana: { kind: "loading" },
+    priya: { kind: "loading" },
+  };
   private readonly mapDolls: Record<"mara" | "dana" | "priya", HTMLImageElement> = {
     mara: new Image(),
     dana: new Image(),
@@ -906,6 +922,7 @@ export class Renderer {
       });
       image.src = `./sprites/dana-${angle}.png`;
     }
+    for (const id of HERO_IDS) this.loadHero8(id);
     this.resize();
     this.trackCanvasPointer();
   }
@@ -2511,9 +2528,12 @@ export class Renderer {
     elite: boolean,
     mirrored: boolean,
     view: string,
+    figureH = 0,
   ): void {
-    const dh = unitDrawHeight(z, elite);
-    const dw = dh * image.naturalWidth / image.naturalHeight;
+    const unitH = unitDrawHeight(z, elite);
+    // hero8 scales the opaque figure to unit height. The bitmap's own bottom centre stays on the feet.
+    const dh = figureH > 0 ? (image.naturalHeight * unitH) / figureH : unitH;
+    const dw = figureH > 0 ? (image.naturalWidth * unitH) / figureH : (dh * image.naturalWidth) / image.naturalHeight;
     const ctx = this.ctx;
     ctx.save();
     ctx.translate(x - dw / 2, feetY - dh);
@@ -2539,11 +2559,90 @@ export class Renderer {
     });
   }
 
+  /** True once this heroine's eight hero8 frames have loaded. Missing files stay false. */
+  hero8Ready(id: HeroId): boolean {
+    return this.hero8[id].kind === "ready";
+  }
+
   /**
-   * Painting for this heroine and screen sector. Painted file when it has loaded, otherwise her
-   * map doll, otherwise the rig. Priya's row is the doll itself, so her mirror flag stays.
+   * Optional sprites/hero8/<id>-0..7.png. Try frame 0 first. One miss or a frame with no
+   * opaque pixels drops the set, and the sector table keeps drawing.
+   */
+  private loadHero8(id: HeroId): void {
+    const fail = (): void => {
+      this.hero8[id] = { kind: "absent" };
+    };
+    const take = (img: HTMLImageElement, done: (box: OpaqueBox) => void): void => {
+      const finish = (): void => {
+        try {
+          if (this.hero8[id].kind === "absent") return;
+          const box = rememberOpaque(img);
+          if (!(img.naturalWidth > 0) || !box) {
+            fail();
+            return;
+          }
+          done(box);
+        } catch {
+          fail();
+        }
+      };
+      if (typeof img.decode === "function") img.decode().then(finish).catch(finish);
+      else finish();
+    };
+    const first = new Image();
+    first.decoding = "async";
+    first.addEventListener("error", fail);
+    first.addEventListener("load", () => {
+      take(first, (box) => {
+        const frames: Array<HeroFrame | undefined> = new Array(8);
+        frames[0] = { image: first, opaque: box };
+        let pending = 7;
+        for (let sector = 1; sector < SCREEN_SECTORS; sector++) {
+          const img = new Image();
+          img.decoding = "async";
+          img.addEventListener("error", fail);
+          img.addEventListener("load", () => {
+            take(img, (opaque) => {
+              if (this.hero8[id].kind === "absent") return;
+              frames[sector] = { image: img, opaque };
+              pending -= 1;
+              if (pending !== 0) return;
+              const views: HeroFrame[] = [];
+              let figureH = 0;
+              for (const frame of frames) {
+                if (!frame || !(frame.image.naturalWidth > 0)) {
+                  fail();
+                  return;
+                }
+                const h = frame.opaque.y1 - frame.opaque.y0;
+                if (h > figureH) figureH = h;
+                views.push(frame);
+              }
+              if (!(figureH > 0) || views.length !== SCREEN_SECTORS) {
+                fail();
+                return;
+              }
+              this.hero8[id] = { kind: "ready", views, figureH };
+            });
+          });
+          img.src = `./sprites/hero8/${id}-${sector}.png`;
+        }
+      });
+    });
+    first.src = `./sprites/hero8/${id}-0.png`;
+  }
+
+  /**
+   * Painting for this heroine and screen sector. A ready hero8 set wins and is never flipped.
+   * Otherwise the sector table: painted file, then her map doll, then the rig. Priya's row is
+   * the doll itself, so her mirror flag stays.
    */
   private heroView(id: HeroId, sector: number): { image: HTMLImageElement; mirror: boolean; view: string } {
+    const set = this.hero8[id];
+    if (set.kind === "ready") {
+      const frame = set.views[sector];
+      return { image: frame.image, mirror: false, view: `hero8:${sector}` };
+    }
     const [name, mirror] = HERO_FALLBACK[id][sector];
     if (name !== "doll" && id !== "priya") {
       const painted = (id === "mara" ? this.maraAngles : this.danaAngles)[name];
@@ -2607,7 +2706,18 @@ export class Renderer {
       if (id) {
         const picked = this.heroView(id, this.screenSector(u));
         if (picked.view !== "rig") {
-          this.drawMapDoll(u.id, picked.image, x, feetY, z, elite, picked.mirror, picked.view);
+          const set = this.hero8[id];
+          this.drawMapDoll(
+            u.id,
+            picked.image,
+            x,
+            feetY,
+            z,
+            elite,
+            picked.mirror,
+            picked.view,
+            set.kind === "ready" ? set.figureH : 0,
+          );
           return;
         }
       }
