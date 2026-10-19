@@ -679,19 +679,6 @@ function greyerAccent(hex: string): string {
   return `#${h(r)}${h(g)}${h(b)}`;
 }
 
-/** Tile highlights are not occluders. A mask re-run of drawTile uses this empty set. */
-const NO_CELLS = new Set<string>();
-const BARE_OVERLAYS: DrawOverlays = {
-  move: NO_CELLS,
-  area: NO_CELLS,
-  hot: NO_CELLS,
-  areaKind: null,
-  selected: null,
-  target: null,
-  inspect: null,
-  phase: "select",
-};
-
 export class Renderer {
   readonly canvas: HTMLCanvasElement;
   /** Pointed at the ring scratch while a mask is punched, then restored. */
@@ -1626,9 +1613,7 @@ export class Renderer {
     }
 
     this.drawTopSurface(t, map, top, cx, cy, hw, hh, pal, z);
-
-    this.drawRailings(t, map, top, z);
-    this.drawProp(t, map.theme, cx, cy, hw, hh, z);
+    this.drawTileStanding(t, map);
 
     if (overlays.move.has(k)) {
       this.quadPath(this.insetQuad(top, 0.92));
@@ -1886,6 +1871,14 @@ export class Renderer {
     ctx.lineTo(top[(hi + 3) % 4].x, top[(hi + 3) % 4].y);
     ctx.strokeStyle = "rgba(20, 20, 28, 0.4)";
     ctx.stroke();
+  }
+
+  /** Railings and the prop. Same top as the tile pass, and no floor or walls. */
+  private drawTileStanding(t: Tile, map: GameMap): void {
+    const { cx, cy, hw, hh, top } = this.topMetrics(t.x, t.y, t.h);
+    const z = this.cam.zoom;
+    this.drawRailings(t, map, top, z);
+    this.drawProp(t, map.theme, cx, cy, hw, hh, z);
   }
 
   private drawRailings(t: Tile, map: GameMap, top: Vec2[], z: number): void {
@@ -3119,8 +3112,10 @@ export class Renderer {
 
   /**
    * Punch nearer occluders out of the current layer. Only cells whose screen box
-   * meets the ring are drawn. drawTile and drawBoardObj paint the silhouette and
-   * must not keep a change to time (they do not touch counters, stamps, or caches).
+   * meets the ring are drawn. A taller cell punches its prism, railings and prop.
+   * A cell at or below the unit's floor punches only its railings and prop, never
+   * the top or the walls. A board object that rises above the floor is punched too.
+   * The re-run must not keep a change to time (no counters, stamps, or caches).
    */
   private eraseRingOccluders(
     u: Unit,
@@ -3141,17 +3136,16 @@ export class Renderer {
         const o = objAt.get(key(c.x, c.y));
         const tall = t.h > floor;
         const prop = t.prop != null;
+        const rail = this.hasRailings(t, map);
         const rises = o != null && t.h + this.objectRise(o) > floor;
-        if (!tall && !prop && !rises) continue;
-        if (!rectsOverlap(this.cellOccluderBounds(t, prop || rises), box)) continue;
-        if (tall) this.punchOut(() => this.fillPrism(t));
-        if (prop || rises) {
-          const obj = rises ? o : undefined;
-          this.punchOut(() => {
-            if (prop) this.drawTile(t, map, BARE_OVERLAYS);
-            if (obj) this.drawBoardObj(obj, map);
-          });
-        }
+        if (!tall && !prop && !rail && !rises) continue;
+        if (!rectsOverlap(this.cellOccluderBounds(t, map, prop || rises), box)) continue;
+        const obj = rises ? o : undefined;
+        this.punchOut(() => {
+          if (tall) this.fillPrism(t);
+          if (tall || prop || rail) this.drawTileStanding(t, map);
+          if (obj) this.drawBoardObj(obj, map);
+        });
       }
     }
     for (let i = index + 1; i < drawn.length; i++) {
@@ -3175,8 +3169,25 @@ export class Renderer {
     }
   }
 
-  /** Screen box of a tile prism. Props and rising objects also pad above the top. */
-  private cellOccluderBounds(t: Tile, pad: boolean): ScreenRect {
+  /** True when drawRailings would stroke at least one edge. */
+  private hasRailings(t: Tile, map: GameMap): boolean {
+    if (t.h < 1 || t.terrain === "stairs") return false;
+    const dirs: Array<[number, number]> = [
+      [0, -1],
+      [1, 0],
+      [0, 1],
+      [-1, 0],
+    ];
+    for (let i = 0; i < 4; i++) {
+      const nb = map.tile(t.x + dirs[i][0], t.y + dirs[i][1]);
+      const dropH = nb ? t.h - nb.h : t.h + 1;
+      if (dropH >= 1) return true;
+    }
+    return false;
+  }
+
+  /** Screen box of a tile prism. Props and rising objects pad out. Railings pad above the top. */
+  private cellOccluderBounds(t: Tile, map: GameMap, pad: boolean): ScreenRect {
     const { drop, top } = this.topMetrics(t.x, t.y, t.h);
     let minX = Infinity;
     let minY = Infinity;
@@ -3188,8 +3199,12 @@ export class Renderer {
       if (p.y < minY) minY = p.y;
       if (p.y + drop > maxY) maxY = p.y + drop;
     }
+    const z = this.cam.zoom;
+    if (this.hasRailings(t, map)) {
+      // Same rise and stroke as drawRailings, so a rail above the back edge still meets the ring.
+      minY -= (map.theme === "roof" ? 7.5 : 6.5) * z + Math.max(1.15, 1.35 * z);
+    }
     if (pad) {
-      const z = this.cam.zoom;
       minX -= 22 * z;
       maxX += 22 * z;
       minY -= 36 * z;
