@@ -135,7 +135,7 @@ export class Game {
   forecast: Forecast | null = null;
   inspect: Inspect | null = null;
   floats: FloatText[] = [];
-  busy = false;
+  private busyFlag = false;
   log = "";
   missionIndex = 0;
   loseKind: "wipe" | "protect" = "wipe";
@@ -375,6 +375,37 @@ export class Game {
 
   get mission(): Mission {
     return MISSIONS[this.missionIndex] ?? MISSIONS[0];
+  }
+
+  private get busy(): boolean {
+    return this.busyFlag;
+  }
+
+  private set busy(value: boolean) {
+    this.busyFlag = value;
+    this.refreshBusyButtons();
+  }
+
+  /** HUD buttons whose handlers return immediately while the board is busy. */
+  private refreshBusyButtons(): void {
+    const locked = this.busyFlag;
+    const u = this.selected;
+    const commanding = !!u && this.phase === "select";
+    this.btnCancel.disabled = (!u && !this.inspect && this.phase !== "itemAim") || this.phase === "enemy" || locked;
+    this.btnWait.disabled = !commanding || locked;
+    this.btnSkill.disabled =
+      !u ||
+      !u.skillName ||
+      u.skillUsed ||
+      u.actedThisTurn ||
+      locked ||
+      (this.phase !== "select" && this.phase !== "skillAim");
+    this.btnConfirm.disabled = this.phase !== "forecast" || locked || this.acting || !this.forecast;
+    this.btnEnd.disabled = locked;
+    this.btnPauseNext.disabled = locked;
+    const canUse = this.playable() && !!u && !u.actedThisTurn && !locked;
+    for (const btn of this.modalBody.querySelectorAll<HTMLButtonElement>("button.use")) btn.disabled = !canUse;
+    for (const btn of this.modalBody.querySelectorAll<HTMLButtonElement>("button.ally-row")) btn.disabled = locked;
   }
 
   private async waitMs(ms: number): Promise<void> {
@@ -2671,19 +2702,9 @@ export class Game {
       this.forecastEl.hidden = true;
     }
 
-    const commanding = !!u && this.phase === "select";
-    this.btnCancel.disabled = (!u && !this.inspect && this.phase !== "itemAim") || this.phase === "enemy" || this.busy;
-    this.btnWait.disabled = !commanding || this.busy;
+    this.refreshBusyButtons();
     this.btnWait.textContent = u && (u.movedThisTurn || u.actedThisTurn) ? "結束" : "待機";
-    this.btnSkill.disabled =
-      !u ||
-      !u.skillName ||
-      u.skillUsed ||
-      u.actedThisTurn ||
-      this.busy ||
-      (this.phase !== "select" && this.phase !== "skillAim");
     this.btnSkill.classList.toggle("armed", this.phase === "skillAim");
-    this.btnConfirm.disabled = this.phase !== "forecast" || this.busy || this.acting || !this.forecast;
     const leftover = this.units.some((x) => x.team === "player" && !x.dead && !x.acted && !x.npc);
     const hideChrome =
       this.phase === "enemy" ||
