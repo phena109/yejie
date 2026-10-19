@@ -567,6 +567,8 @@ const UNIT_LOWER_STAMP_W = 0.55;
 const UNIT_LOWER_RING_W = 0.8;
 /** Occlusion ghost. Full-opacity source, drawn over whatever hid the body. */
 const GHOST_ALPHA = 0.45;
+/** Ghost only when this top fraction of the stamp is covered. Feet behind a ledge do not count. */
+const GHOST_HEAD = 0.35;
 /**
  * Spent player units stay readable: the body is about 78% opaque and, where
  * canvas filters work, mildly desaturated and darkened. Rings and plates are not faded.
@@ -2329,15 +2331,19 @@ export class Renderer {
   ): boolean {
     const start = cellIndex.get(key(u.x, u.y));
     if (start == null) return false;
+    // Head band only. A unit half behind a ledge keeps the visible part and no ghost
+    // over the ledge; a covered head (Reed, behind the tall M2 blocks) still ghosts.
+    const head: ScreenRect = { x: body.x, y: body.y, w: body.w, h: body.h * GHOST_HEAD };
+    if (!(head.w > 0) || !(head.h > 0)) return false;
     const unitH = map.heightAt(u.x, u.y);
     for (let i = start + 1; i < cells.length; i++) {
       const c = cells[i];
       const t = map.tiles[c.y][c.x];
-      if (t.h > unitH && this.prismHitsRect(t, body)) return true;
+      if (t.h > unitH && this.prismHitsRect(t, head)) return true;
       const o = objAt.get(key(c.x, c.y));
       if (!o) continue;
       if (t.h + this.objectRise(o) <= unitH) continue;
-      if (rectsOverlap(this.boardObjRect(o, t.h), body)) return true;
+      if (rectsOverlap(this.boardObjRect(o, t.h), head)) return true;
     }
     return false;
   }
