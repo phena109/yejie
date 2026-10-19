@@ -247,7 +247,7 @@ export class Game {
       this.renderer.resize();
       // A width change (window resize, phone rotation) re-frames the board if it no longer fits.
       // Height-only changes (mobile URL bar) leave the camera alone.
-      if (Math.abs(this.renderer.w - prevW) > 1 && this.inBattleView() && !this.renderer.boardFits(this.map, this.missionIndex === 0)) this.frameBoard();
+      if (Math.abs(this.renderer.w - prevW) > 1 && this.inBattleView() && !this.renderer.boardFits(this.map)) this.frameBoard();
     });
     el<HTMLButtonElement>("btn-start").addEventListener("click", () => this.begin());
     el<HTMLButtonElement>("btn-restart").addEventListener("click", () => this.restart());
@@ -724,14 +724,9 @@ export class Game {
   }
 
   /**
-   * Mission-start camera. M1 stays centred on the squad at 0.7 (until the #9 background art lands)
-   * when the whole board fits; on a narrow screen, and on every other mission, frame the board.
+   * Mission-start camera. Every mission, M1 included, frames the whole board.
    */
   private frameBoard(): void {
-    if (this.missionIndex === 0) {
-      this.renderer.centerOn(this.units, this.map);
-      if (this.renderer.boardFits(this.map, true)) return;
-    }
     this.renderer.fitToMap(this.map);
   }
 

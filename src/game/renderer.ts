@@ -1286,8 +1286,7 @@ export class Renderer {
 
   /**
    * True when the whole board is inside the viewport at the current camera (small margin).
-   * `widthOnly` ignores the vertical extent (M1 is framed on the squad, so its far edge may sit
-   * above the screen on purpose).
+   * `widthOnly` ignores the vertical extent. Mission framing always uses the full test.
    */
   boardFits(map: GameMap, widthOnly = false): boolean {
     this.syncMap(map);
