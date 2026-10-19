@@ -1720,6 +1720,10 @@ export class Game {
       this.applyFlankScenario();
       return;
     }
+    if (scenario === "occlude") {
+      this.applyOccludeScenario();
+      return;
+    }
     if (scenario !== "heal") return;
     if (this.mission.id !== "m1" || this.phase !== "select") return;
     const priya = this.units.find((u) => u.id === "priya");
@@ -1798,6 +1802,81 @@ export class Game {
     pike.hp = pike.maxHp;
     mara.dir = 1;
     dana.dir = 0;
+    this.renderer.centerOn(this.units, this.map);
+    this.selectUnit(mara);
+  }
+
+  /**
+   * Mission 1 player's turn, `?debug=1&scenario=occlude` (or `?scenario=occlude` on the dev server).
+   * Moves the units already on the map (no new ones) to stand just north of a raised block or stall,
+   * facing it (dir S), so at 旋轉 0 the block is between them and the camera.
+   * mara (2,2) and dana (6,2) on the north stairs; priya (1,6) and crosby (8,6) on the south roofs;
+   * e1 (2,4), e2 (6,4), e4 (8,3), e3 (4,8) behind stalls. A spot that is not free and walkable is
+   * swapped for the nearest free cell still just behind that block. No effect elsewhere, or without
+   * the debug gate.
+   */
+  private applyOccludeScenario(): void {
+    if (this.mission.id !== "m1" || this.phase !== "select") return;
+    const mara = this.units.find((u) => u.id === "mara");
+    const dana = this.units.find((u) => u.id === "dana");
+    const priya = this.units.find((u) => u.id === "priya");
+    const crosby = this.units.find((u) => u.id === "crosby");
+    const e1 = this.units.find((u) => u.id === "e1");
+    const e2 = this.units.find((u) => u.id === "e2");
+    const e3 = this.units.find((u) => u.id === "e3");
+    const e4 = this.units.find((u) => u.id === "e4");
+    if (!mara || !dana || !priya || !crosby || !e1 || !e2 || !e3 || !e4) return;
+    const want: Array<[Unit, number, number]> = [
+      [mara, 2, 2],
+      [dana, 6, 2],
+      [priya, 1, 6],
+      [crosby, 8, 6],
+      [e1, 2, 4],
+      [e2, 6, 4],
+      [e3, 4, 8],
+      [e4, 8, 3],
+    ];
+    const ids = new Set(want.map(([u]) => u.id));
+    const taken = new Set<string>();
+    const place: Array<[Unit, number, number]> = [];
+    const free = (x: number, y: number): boolean => {
+      if (taken.has(key(x, y))) return false;
+      if (!this.map.walkable(x, y)) return false;
+      return !this.units.some((u) => !u.dead && !ids.has(u.id) && u.x === x && u.y === y);
+    };
+    for (const [u, x, y] of want) {
+      let spot: { x: number; y: number } | null = free(x, y) ? { x, y } : null;
+      if (!spot) {
+        // Stay north of the block they face (the cell to the south). Closest free tile wins.
+        let bestD = Infinity;
+        for (let dy = 0; dy <= 3; dy++) {
+          for (let dx = -2; dx <= 2; dx++) {
+            if (dx === 0 && dy === 0) continue;
+            const nx = x + dx;
+            const ny = y - dy;
+            if (!free(nx, ny)) continue;
+            const d = dx * dx + dy * dy;
+            if (d < bestD) {
+              bestD = d;
+              spot = { x: nx, y: ny };
+            }
+          }
+        }
+      }
+      if (!spot) return;
+      taken.add(key(spot.x, spot.y));
+      place.push([u, spot.x, spot.y]);
+    }
+    for (const [u, x, y] of place) {
+      u.x = x;
+      u.y = y;
+      u.dir = 2;
+      u.dead = false;
+      u.acted = false;
+      u.skillUsed = false;
+      u.movedThisTurn = false;
+      u.actedThisTurn = false;
+    }
     this.renderer.centerOn(this.units, this.map);
     this.selectUnit(mara);
   }
