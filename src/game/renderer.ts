@@ -113,6 +113,8 @@ export interface BodyStamp {
   dw: number;
   dh: number;
   mirror: boolean;
+  /** "painted:<angle>", "doll", or "rig". */
+  view: string;
 }
 
 /** Cached alpha of one stamp source. `ok` is false when the bitmap cannot be read. */
@@ -587,21 +589,34 @@ const LABEL_LIFT_CAP = 20;
 /** Draw a leader once a plate has left its anchor by more than this many screen pixels. */
 const LABEL_LEADER_MIN = 8;
 type PaintedAngle = "front" | "ne" | "right" | "se" | "back" | "sw" | "left" | "nw";
+/** A painted angle file, or the single map doll. */
+type FallbackView = PaintedAngle | "doll";
+const HERO_IDS = ["mara", "dana", "priya"] as const;
+export type HeroId = (typeof HERO_IDS)[number];
+
 /**
- * Painted map art, indexed by screen sector (see screenSector): 0 toward the viewer, then clockwise
- * on screen: 1 down-left, 2 left, 3 up-left, 4 away, 5 up-right, 6 right, 7 down-right.
- * Each entry is the file that actually shows that view (checked by eye, 19 Oct): the file names do
- * not follow grid compass points. Mara: ne = 3/4 front looking right, nw = 3/4 front looking left,
- * se = 3/4 back turned left, sw = 3/4 back turned right. Dana: ne looks left, nw looks right, and
- * both se and sw are 3/4 back turned right, so up-left mirrors sw.
+ * One row per heroine, indexed by screen sector (see screenSector): 0 toward the viewer, then
+ * clockwise on screen: 1 down-left, 2 left, 3 up-left, 4 away, 5 up-right, 6 right, 7 down-right.
+ * Each entry is [view, mirror]. The file that actually shows that view was checked by eye (19 Oct).
+ * The names do not follow grid compass points. Mara: ne = 3/4 front looking right, nw = 3/4 front
+ * looking left, se = 3/4 back turned left, sw = 3/4 back turned right. Dana: ne looks left, nw looks
+ * right, and both se and sw are 3/4 back turned right, so up-left mirrors sw. Priya has one doll,
+ * a 3/4 front looking down-left, mirrored on the right-facing sectors.
  */
-const PAINTED_BY_SECTOR: Record<"mara" | "dana", ReadonlyArray<readonly [PaintedAngle, boolean]>> = {
+const HERO_FALLBACK: Record<HeroId, readonly (readonly [FallbackView, boolean])[]> = {
   mara: [["front", false], ["nw", false], ["left", false], ["se", false], ["back", false], ["sw", false], ["right", false], ["ne", false]],
   dana: [["front", false], ["ne", false], ["left", false], ["sw", true], ["back", false], ["se", false], ["right", false], ["nw", false]],
+  priya: [["doll", false], ["doll", false], ["doll", false], ["doll", false], ["doll", false], ["doll", true], ["doll", true], ["doll", true]],
 };
-/** Priya's single painting is a 3/4 front view looking down-left; mirror it for right-facing sectors. */
-const PRIYA_MIRROR_SECTORS = new Set([5, 6, 7]);
 const SCREEN_SECTORS = 8;
+
+function isHeroId(id: string): id is HeroId {
+  return (HERO_IDS as readonly string[]).includes(id);
+}
+
+function imageReady(image: HTMLImageElement): boolean {
+  return image.complete && image.naturalWidth > 0 && image.naturalHeight > 0;
+}
 
 /**
  * Some painted map files have no alpha (a flat dark backdrop). Flood-fill from the border and clear
@@ -2273,6 +2288,7 @@ export class Renderer {
       dw: bill.w,
       dh: bill.h,
       mirror: false,
+      view: "rig",
     });
   }
 
@@ -2415,6 +2431,7 @@ export class Renderer {
     z: number,
     elite: boolean,
     mirrored: boolean,
+    view: string,
   ): void {
     const dh = unitDrawHeight(z, elite);
     const dw = dh * image.naturalWidth / image.naturalHeight;
@@ -2436,7 +2453,23 @@ export class Renderer {
       dw,
       dh,
       mirror: mirrored,
+      view,
     });
+  }
+
+  /**
+   * Painting for this heroine and screen sector. Painted file when it has loaded, otherwise her
+   * map doll, otherwise the rig. Priya's row is the doll itself, so her mirror flag stays.
+   */
+  private heroView(id: HeroId, sector: number): { image: HTMLImageElement; mirror: boolean; view: string } {
+    const [name, mirror] = HERO_FALLBACK[id][sector];
+    if (name !== "doll" && id !== "priya") {
+      const painted = (id === "mara" ? this.maraAngles : this.danaAngles)[name];
+      if (imageReady(painted)) return { image: painted, mirror, view: `painted:${name}` };
+    }
+    const doll = this.mapDolls[id];
+    if (imageReady(doll)) return { image: doll, mirror: name === "doll" ? mirror : false, view: "doll" };
+    return { image: doll, mirror: false, view: "rig" };
   }
 
   /**
@@ -2485,36 +2518,23 @@ export class Renderer {
       ctx.stroke();
     }
 
-    // Doll, painted Dana/Mara, and the rig all record an undimmed stamp inside this callback.
+    // Doll, painted heroine, and the rig all record an undimmed stamp inside this callback.
     const drawBody = (): void => {
+      // Heading is world facing minus camera yaw, so the body and the ground chevron agree at any 旋轉 or twist.
+      const id = isHeroId(u.archetype) ? u.archetype : null;
+      if (id) {
+        const picked = this.heroView(id, this.screenSector(u));
+        if (picked.view !== "rig") {
+          this.drawMapDoll(u.id, picked.image, x, feetY, z, elite, picked.mirror, picked.view);
+          return;
+        }
+      }
       const project = this.projectFor(u, map);
       const shifted: ProjectFn = (lx, ly, lz) => {
         const q = project(lx, ly, lz);
         return { x: q.x + dx, y: q.y + dy, d: q.d };
       };
-      // Mara and Dana: 8 painted views; Priya: one painting, mirrored. The view is picked from the
-      // unit's world heading minus the camera yaw, so body and ground chevron agree at any 旋轉 or twist.
-      const sector = this.screenSector(u);
-      if (u.archetype === "mara" || u.archetype === "dana") {
-        const angles = u.archetype === "mara" ? this.maraAngles : this.danaAngles;
-        const [name, mirror] = PAINTED_BY_SECTOR[u.archetype][sector];
-        const painted = angles[name];
-        const fallback = this.mapDolls[u.archetype];
-        if (painted.complete && painted.naturalWidth > 0 && painted.naturalHeight > 0) {
-          this.drawMapDoll(u.id, painted, x, feetY, z, elite, mirror);
-        } else if (fallback.complete && fallback.naturalWidth > 0 && fallback.naturalHeight > 0) {
-          this.drawMapDoll(u.id, fallback, x, feetY, z, elite, false);
-        } else {
-          this.rememberRig(u.id, drawRig(ctx, shifted, u, this.time, z, this.yaw, this.pitch));
-        }
-      } else {
-        const doll = u.archetype === "priya" ? this.mapDolls.priya : null;
-        if (doll && doll.complete && doll.naturalWidth > 0 && doll.naturalHeight > 0) {
-          this.drawMapDoll(u.id, doll, x, feetY, z, elite, PRIYA_MIRROR_SECTORS.has(sector));
-        } else {
-          this.rememberRig(u.id, drawRig(ctx, shifted, u, this.time, z, this.yaw, this.pitch));
-        }
-      }
+      this.rememberRig(u.id, drawRig(ctx, shifted, u, this.time, z, this.yaw, this.pitch));
     };
     if (dim) this.withActedBody(drawBody);
     else drawBody();
