@@ -1808,12 +1808,14 @@ export class Game {
 
   /**
    * Mission 1 player's turn, `?debug=1&scenario=occlude` (or `?scenario=occlude` on the dev server).
-   * Moves the units already on the map (no new ones) to stand just north of a raised block or stall,
-   * facing it (dir S), so at 旋轉 0 the block is between them and the camera.
-   * mara (2,2) and dana (6,2) on the north stairs; priya (1,6) and crosby (8,6) on the south roofs;
-   * e1 (2,4), e2 (6,4), e4 (8,3), e3 (4,8) behind stalls. A spot that is not free and walkable is
-   * swapped for the nearest free cell still just behind that block. No effect elsewhere, or without
-   * the debug gate.
+   * Moves the units already on the map (no new ones) to a height-0 cell one step north (smaller y)
+   * or west (smaller x) of a taller block or a stall, facing it (dir S), so at 旋轉 0 the block is
+   * between them and the camera.
+   * mara (4,2) behind the h1 ledge on row 3; dana (1,5) behind the h2 left roof (rows 6-7);
+   * priya (2,4) behind stall (2,5); crosby (8,5) behind the h2 right roof;
+   * e1 (5,8) behind stall (5,9); e2 (6,4) behind stall (6,5); e3 (1,3) behind stall (1,4);
+   * e4 (8,3) behind stall (8,4). A spot that is not free and walkable is swapped for the nearest
+   * free cell still just behind that block. No effect elsewhere, or without the debug gate.
    */
   private applyOccludeScenario(): void {
     if (this.mission.id !== "m1" || this.phase !== "select") return;
@@ -1827,13 +1829,13 @@ export class Game {
     const e4 = this.units.find((u) => u.id === "e4");
     if (!mara || !dana || !priya || !crosby || !e1 || !e2 || !e3 || !e4) return;
     const want: Array<[Unit, number, number]> = [
-      [mara, 2, 2],
-      [dana, 6, 2],
-      [priya, 1, 6],
-      [crosby, 8, 6],
-      [e1, 2, 4],
+      [mara, 4, 2],
+      [dana, 1, 5],
+      [priya, 2, 4],
+      [crosby, 8, 5],
+      [e1, 5, 8],
       [e2, 6, 4],
-      [e3, 4, 8],
+      [e3, 1, 3],
       [e4, 8, 3],
     ];
     const ids = new Set(want.map(([u]) => u.id));
