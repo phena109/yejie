@@ -16,9 +16,12 @@ export const BASE = 8;
 export const PITCH_MIN = 15;
 export const PITCH_MAX = 75;
 export const PITCH_DEFAULT = 30;
-/** Camera zoom range shared by framing and pinch/wheel. 0.4 lets a ~360px phone see the whole M1 board. */
+/** Zoom-out floor shared by framing and pinch/wheel. 0.4 lets a ~360px phone see the whole M1 board. */
 export const ZOOM_MIN = 0.4;
+/** Closest zoom on a short viewport. maxZoom() raises this until a character is half the screen tall. */
 export const ZOOM_MAX = 1.8;
+/** Hard cap on closest zoom, so a very tall window cannot scale a character without limit. */
+export const ZOOM_CAP = 12;
 
 export type AreaKind = "attack" | "skill" | "item";
 
@@ -1301,6 +1304,16 @@ export class Renderer {
   }
 
   /**
+   * Closest zoom. A normal character is at least half this viewport tall (ZOOM_MAX on a short
+   * screen), and never past ZOOM_CAP. unitDrawHeight is linear in zoom, so the half-height zoom
+   * is (0.5 * h) / unitDrawHeight(1, false).
+   */
+  maxZoom(): number {
+    const z = (0.5 * this.h) / unitDrawHeight(1, false);
+    return Math.min(ZOOM_CAP, Math.max(ZOOM_MAX, z));
+  }
+
+  /**
    * Frame the whole board at the current yaw and pitch.
    * Bounds are every tile's top corners (isoOf) plus the prism base (topMetrics.drop),
    * so the lowest edge includes the slab under the front faces.
@@ -1313,7 +1326,7 @@ export class Renderer {
     const worldW = b.maxX - b.minX;
     const worldH = b.maxY - b.minY;
     const fit = Math.min((this.w * 0.92) / worldW, (this.h * 0.85) / worldH);
-    this.cam.zoom = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, fit));
+    this.cam.zoom = Math.min(this.maxZoom(), Math.max(ZOOM_MIN, fit));
     this.cam.x = (b.minX + b.maxX) / 2;
     this.cam.y = (b.minY + b.maxY) / 2;
   }
