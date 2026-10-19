@@ -1037,18 +1037,18 @@ export class Game {
 
   /**
    * Pointer is on the unit that is already selected.
-   * The stamp box counts, so transparent padding is not the tile behind the sprite.
-   * A different unit's tile under that padding is left to the normal tap.
+   * The opaque figure counts. A click in the transparent margin falls through to the tile.
+   * A different unit's tile under that margin is left to the normal tap.
    */
   private tapOnSelected(p: Vec2, hit: Unit | null): boolean {
     const sel = this.selected;
     if (!sel || sel.dead) return false;
     if (hit) return hit.id === sel.id;
     const stamp = this.renderer.bodyStamps.get(sel.id);
-    if (!stamp || !(stamp.dw > 0) || !(stamp.dh > 0)) return false;
-    // One pixel of slop: a click on the stamp edge can land just outside after rounding.
+    if (!stamp || !(stamp.fig.w > 0) || !(stamp.fig.h > 0)) return false;
+    // One pixel of slop: a click on the figure edge can land just outside after rounding.
     const slop = 1;
-    if (p.x < stamp.dx - slop || p.y < stamp.dy - slop || p.x > stamp.dx + stamp.dw + slop || p.y > stamp.dy + stamp.dh + slop) return false;
+    if (p.x < stamp.fig.x - slop || p.y < stamp.fig.y - slop || p.x > stamp.fig.x + stamp.fig.w + slop || p.y > stamp.fig.y + stamp.fig.h + slop) return false;
     const tile = this.renderer.hitTile(p.x, p.y, this.map);
     if (!tile) return true;
     const occ = this.unitAt(tile.x, tile.y);

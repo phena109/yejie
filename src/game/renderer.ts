@@ -113,6 +113,8 @@ export interface BodyStamp {
   dw: number;
   dh: number;
   mirror: boolean;
+  /** Opaque figure on screen. The full stamp rect when the image has no bbox yet. */
+  fig: ScreenRect;
   /** "painted:<angle>", "doll", or "rig". */
   view: string;
 }
@@ -564,9 +566,9 @@ const UNIT_ALPHA_HIT = 40;
 const UNIT_ALPHA_RADIUS = 2;
 /** Feet-ring pick is the drawn ellipse grown by this factor. Both radii scale. */
 const UNIT_RING_HIT_SCALE = 1.15;
-/** Lower-body box starts this far down the stamp (0 = top, 1 = feet). */
+/** Lower-body box starts this far down the figure (0 = top, 1 = feet). */
 const UNIT_LOWER_TOP = 0.45;
-/** Lower-body box is at least this fraction of the stamp width, centred on the ring. */
+/** Lower-body box is at least this fraction of the figure width, centred on the ring. */
 const UNIT_LOWER_STAMP_W = 0.55;
 /** And at least this fraction of the ring diameter (2 * RING_RX * scale). */
 const UNIT_LOWER_RING_W = 0.8;
@@ -616,6 +618,72 @@ function isHeroId(id: string): id is HeroId {
 
 function imageReady(image: HTMLImageElement): boolean {
   return image.complete && image.naturalWidth > 0 && image.naturalHeight > 0;
+}
+
+/** Source alpha at or above this (out of 255) belongs to the figure. */
+const FIGURE_ALPHA = 24;
+
+interface OpaqueBox {
+  x0: number;
+  y0: number;
+  x1: number;
+  y1: number;
+}
+
+/** One bbox per painted image. Null means the scan found no opaque pixel. */
+const opaqueBoxes = new WeakMap<HTMLImageElement, OpaqueBox | null>();
+
+function boxFromPixels(px: Uint8ClampedArray, w: number, h: number): OpaqueBox | null {
+  let x0 = w;
+  let y0 = h;
+  let x1 = 0;
+  let y1 = 0;
+  for (let y = 0; y < h; y++) {
+    const row = y * w * 4;
+    for (let x = 0; x < w; x++) {
+      if (px[row + x * 4 + 3] < FIGURE_ALPHA) continue;
+      if (x < x0) x0 = x;
+      if (y < y0) y0 = y;
+      if (x + 1 > x1) x1 = x + 1;
+      if (y + 1 > y1) y1 = y + 1;
+    }
+  }
+  if (!(x1 > x0 && y1 > y0)) return null;
+  return { x0, y0, x1, y1 };
+}
+
+function rememberOpaque(img: HTMLImageElement): OpaqueBox | null {
+  const w = img.naturalWidth;
+  const h = img.naturalHeight;
+  if (!(w > 0 && h > 0) || typeof document === "undefined") return null;
+  const canvas = document.createElement("canvas");
+  canvas.width = w;
+  canvas.height = h;
+  const g = canvas.getContext("2d", { willReadFrequently: true });
+  if (!g) return null;
+  let box: OpaqueBox | null = null;
+  try {
+    g.drawImage(img, 0, 0);
+    box = boxFromPixels(g.getImageData(0, 0, w, h).data, w, h);
+  } catch {
+    box = null;
+  }
+  opaqueBoxes.set(img, box);
+  return box;
+}
+
+/** Map an image-pixel bbox onto the drawn stamp. A mirror flips the x range. */
+function figureRect(img: HTMLImageElement, dx: number, dy: number, dw: number, dh: number, mirror: boolean): ScreenRect {
+  const full: ScreenRect = { x: dx, y: dy, w: dw, h: dh };
+  const box = opaqueBoxes.get(img);
+  const sw = img.naturalWidth;
+  const sh = img.naturalHeight;
+  if (!box || !(sw > 0) || !(sh > 0) || !(dw > 0) || !(dh > 0)) return full;
+  const sx0 = (box.x0 / sw) * dw;
+  const sx1 = (box.x1 / sw) * dw;
+  const sy0 = (box.y0 / sh) * dh;
+  const sy1 = (box.y1 / sh) * dh;
+  return { x: mirror ? dx + dw - sx1 : dx + sx0, y: dy + sy0, w: sx1 - sx0, h: sy1 - sy0 };
 }
 
 /**
@@ -677,6 +745,9 @@ function keyOpaqueBackdrop(img: HTMLImageElement): void {
     if (i < w * (h - 1)) stack.push(i + w);
   }
   g.putImageData(data, 0, 0);
+  // Scan this buffer, not the <img>. The data-URL load can run before those pixels are drawable,
+  // and a scan then would keep the navy plate as the figure.
+  opaqueBoxes.set(img, boxFromPixels(px, w, h));
   img.src = c.toDataURL("image/png");
 }
 
@@ -816,16 +887,23 @@ export class Renderer {
     if (location.search.includes("bgslot")) this.legacyPlate = false;
     for (const [archetype, image] of Object.entries(this.mapDolls)) {
       image.decoding = "async";
+      image.addEventListener("load", () => rememberOpaque(image));
       image.src = `./sprites/${archetype}.png`;
     }
     for (const [angle, image] of Object.entries(this.maraAngles)) {
       image.decoding = "async";
+      image.addEventListener("load", () => rememberOpaque(image));
       image.src = `./sprites/mara-${angle}.png`;
     }
     for (const [angle, image] of Object.entries(this.danaAngles)) {
       image.decoding = "async";
       // Dana's four diagonal paintings are opaque RGB on a navy backdrop; clear it once loaded.
-      image.addEventListener("load", () => keyOpaqueBackdrop(image));
+      image.addEventListener("load", () => {
+        const src = image.src;
+        keyOpaqueBackdrop(image);
+        if (image.src !== src || opaqueBoxes.has(image)) return;
+        rememberOpaque(image);
+      });
       image.src = `./sprites/dana-${angle}.png`;
     }
     this.resize();
@@ -1092,8 +1170,8 @@ export class Renderer {
   /** True when the pointer is on this unit's drawn pixels. */
   private unitAlphaHit(sx: number, sy: number, u: Unit, map: GameMap): boolean {
     const stamp = this.bodyStamps.get(u.id);
-    if (stamp && stamp.dw > 0 && stamp.dh > 0) {
-      if (sx < stamp.dx || sy < stamp.dy || sx > stamp.dx + stamp.dw || sy > stamp.dy + stamp.dh) return false;
+    if (stamp && stamp.fig.w > 0 && stamp.fig.h > 0) {
+      if (sx < stamp.fig.x || sy < stamp.fig.y || sx > stamp.fig.x + stamp.fig.w || sy > stamp.fig.y + stamp.fig.h) return false;
       const pixel = this.stampPixelHit(stamp, sx, sy);
       if (pixel != null) return pixel;
     }
@@ -1112,30 +1190,30 @@ export class Renderer {
   }
 
   /**
-   * Lower body, centred on the ring x. From 45% down the stamp to the bottom of
+   * Lower body, centred on the ring x. From 45% down the figure to the bottom of
    * the drawn ring (ring centre + RING_RY * scale). Width is the larger of 55% of
-   * the stamp and 80% of the ring diameter.
+   * the figure and 80% of the ring diameter.
    */
   private unitLowerBodyHit(sx: number, sy: number, u: Unit, map: GameMap): boolean {
     const stamp = this.bodyStamps.get(u.id);
-    if (!stamp || !(stamp.dw > 0) || !(stamp.dh > 0)) return false;
+    if (!stamp || !(stamp.fig.w > 0) || !(stamp.fig.h > 0)) return false;
     const pose = this.unitPose(u, map);
-    const width = Math.max(stamp.dw * UNIT_LOWER_STAMP_W, 2 * RING_RX * pose.scale * UNIT_LOWER_RING_W);
+    const width = Math.max(stamp.fig.w * UNIT_LOWER_STAMP_W, 2 * RING_RX * pose.scale * UNIT_LOWER_RING_W);
     const left = pose.x - width / 2;
-    const top = stamp.dy + stamp.dh * UNIT_LOWER_TOP;
+    const top = stamp.fig.y + stamp.fig.h * UNIT_LOWER_TOP;
     const bottom = pose.feetY + RING_DROP * pose.z + RING_RY * pose.scale;
     return sx >= left && sx <= left + width && sy >= top && sy <= bottom;
   }
 
   /**
-   * Fallback body box when the stamp image cannot be read: full drawn height,
-   * about 70% of the width. Before a stamp exists, the computed billboard.
+   * Fallback body box when the stamp image cannot be read: full figure height,
+   * about 70% of the figure width. Before a stamp exists, the computed billboard.
    */
   private unitBodyRect(u: Unit, pose: { x: number; feetY: number; dh: number }): ScreenRect {
     const stamp = this.bodyStamps.get(u.id);
-    if (stamp && stamp.dw > 0 && stamp.dh > 0) {
-      const w = stamp.dw * UNIT_HIT_WIDTH;
-      return { x: stamp.dx + (stamp.dw - w) / 2, y: stamp.dy, w, h: stamp.dh };
+    if (stamp && stamp.fig.w > 0 && stamp.fig.h > 0) {
+      const w = stamp.fig.w * UNIT_HIT_WIDTH;
+      return { x: stamp.fig.x + (stamp.fig.w - w) / 2, y: stamp.fig.y, w, h: stamp.fig.h };
     }
     const dw = pose.dh * UNIT_BODY_ASPECT;
     return { x: pose.x - dw / 2, y: pose.feetY - pose.dh, w: dw, h: pose.dh };
@@ -2288,6 +2366,7 @@ export class Renderer {
       dw: bill.w,
       dh: bill.h,
       mirror: false,
+      fig: { x: bill.x, y: bill.y, w: bill.w, h: bill.h },
       view: "rig",
     });
   }
@@ -2418,7 +2497,7 @@ export class Renderer {
   ): void {
     const stamp = this.bodyStamps.get(u.id);
     if (!stamp) return;
-    const body: ScreenRect = { x: stamp.dx, y: stamp.dy, w: stamp.dw, h: stamp.dh };
+    const body = stamp.fig;
     if (!this.bodyOccluded(u, map, cells, cellIndex, objAt, body)) return;
     this.drawGhost(stamp, factionColor(u));
   }
@@ -2444,15 +2523,18 @@ export class Renderer {
     }
     ctx.drawImage(image, 0, 0, dw, dh);
     ctx.restore();
+    const dx = x - dw / 2;
+    const dy = feetY - dh;
     this.bodyStamps.set(id, {
       source: image,
       sw: image.naturalWidth,
       sh: image.naturalHeight,
-      dx: x - dw / 2,
-      dy: feetY - dh,
+      dx,
+      dy,
       dw,
       dh,
       mirror: mirrored,
+      fig: figureRect(image, dx, dy, dw, dh, mirrored),
       view,
     });
   }
@@ -2680,7 +2762,7 @@ export class Renderer {
       const barW = 22 * scale;
       const barH = 3.5 * scale;
       const stamp = this.bodyStamps.get(u.id);
-      const headTop = stamp && stamp.dh > 0 ? stamp.dy : feetY - dh;
+      const headTop = stamp && stamp.fig.h > 0 ? stamp.fig.y : feetY - dh;
       const lift = Math.max(2, 3 * z);
       // Name plate sits just above the sprite. The HP bar is stacked on top of the plate.
       const plateY = headTop - lift - plateH;
@@ -2708,11 +2790,11 @@ export class Renderer {
       s.dx = 0;
       s.dy = 0;
       s.z = z;
-      if (stamp && stamp.dw > 0 && stamp.dh > 0) {
-        s.bodyX = stamp.dx;
-        s.bodyY = stamp.dy;
-        s.bodyW = stamp.dw;
-        s.bodyH = stamp.dh;
+      if (stamp && stamp.fig.w > 0 && stamp.fig.h > 0) {
+        s.bodyX = stamp.fig.x;
+        s.bodyY = stamp.fig.y;
+        s.bodyW = stamp.fig.w;
+        s.bodyH = stamp.fig.h;
       } else {
         const dw = dh * UNIT_BODY_ASPECT;
         s.bodyX = x - dw / 2;
@@ -3182,8 +3264,8 @@ export class Renderer {
     }
     for (let i = index + 1; i < drawn.length; i++) {
       const stamp = this.bodyStamps.get(drawn[i].id);
-      if (!stamp || !(stamp.dw > 0) || !(stamp.dh > 0)) continue;
-      if (!rectsOverlap({ x: stamp.dx, y: stamp.dy, w: stamp.dw, h: stamp.dh }, box)) continue;
+      if (!stamp || !(stamp.fig.w > 0) || !(stamp.fig.h > 0)) continue;
+      if (!rectsOverlap(stamp.fig, box)) continue;
       this.eraseStamp(stamp);
     }
   }
