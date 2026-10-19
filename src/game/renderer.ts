@@ -841,7 +841,7 @@ export class Renderer {
   private readonly rigSnaps = new Map<string, HTMLCanvasElement>();
   private ghostCanvas: HTMLCanvasElement | null = null;
   private ghostCtx: CanvasRenderingContext2D | null = null;
-  /** Board-sized scratch for one unit's ring and chevron. Reused across units and frames. */
+  /** Board-sized scratch for one unit's ring and facing arrow. Reused across units and frames. */
   private overlayCanvas: HTMLCanvasElement | null = null;
   private overlayCtx: CanvasRenderingContext2D | null = null;
   /** Placed name plates from the last draw(), in canvas coordinates. */
@@ -1498,8 +1498,8 @@ export class Renderer {
     // Replay the cached billboard before rings so the label still sits on top.
     for (const u of drawn) this.drawOccludedGhost(u, map, cells, cellIndex, objAt);
 
-    // Rings and chevrons paint after tiles, then nearer blocks punch them out.
-    // Name plates stay above that, or a nearer wall would clip the label.
+    // Rings and arrows paint after tiles. Nearer bodies punch only the ring.
+    // Terrain punches the ring and the arrow. Plates stay above both.
     this.drawUnitOverlays(drawn, map, overlays, cells, cellIndex, objAt);
 
     this.drawVignette();
@@ -3253,8 +3253,8 @@ export class Renderer {
   }
 
   /**
-   * Ring and chevron go to a scratch layer, then nearer geometry is punched out
-   * with destination-out. The selected unit uses the same path.
+   * Ring first, then later bodies punch only the ring. The arrow is drawn after
+   * that, and terrain punches both. Facing stays readable over another unit.
    */
   private paintMaskedRing(
     u: Unit,
@@ -3271,17 +3271,19 @@ export class Renderer {
     const layer = this.overlayLayer();
     if (!layer) {
       this.paintUnitRing(slot);
-      this.drawFacingWedge(u, map, slot.z, slot.accent, selected);
+      this.drawFacingWedge(u, map, slot, selected);
       return;
     }
     const main = this.ctx;
+    const box = this.markBounds(u, slot, map, selected);
     this.ctx = layer.g;
     try {
       layer.g.globalCompositeOperation = "source-over";
       layer.g.globalAlpha = 1;
       this.paintUnitRing(slot);
-      this.drawFacingWedge(u, map, slot.z, slot.accent, selected);
-      this.eraseRingOccluders(u, map, cells, cellIndex, objAt, drawn, index, this.markBounds(u, slot, map, selected));
+      this.eraseRingOccluders(u, map, cells, cellIndex, objAt, drawn, index, box, "bodies");
+      this.drawFacingWedge(u, map, slot, selected);
+      this.eraseRingOccluders(u, map, cells, cellIndex, objAt, drawn, index, box, "ground");
     } finally {
       this.ctx = main;
     }
@@ -3318,13 +3320,13 @@ export class Renderer {
     return { g, canvas: scratch };
   }
 
-  /** Screen box of the ring ellipse plus the facing chevron, with a stroke pad. */
+  /** Screen box of the ring ellipse plus the facing arrow, with a stroke pad. */
   private markBounds(u: Unit, s: LabelSlot, map: GameMap, selected: boolean): ScreenRect {
     let minX = s.ringX - s.ringRx;
     let maxX = s.ringX + s.ringRx;
     let minY = s.ringY - s.ringRy;
     let maxY = s.ringY + s.ringRy;
-    for (const p of this.facingChevron(u, map, s.z, selected)) {
+    for (const p of this.facingArrow(u, map, s, selected).pts) {
       if (p.x < minX) minX = p.x;
       if (p.x > maxX) maxX = p.x;
       if (p.y < minY) minY = p.y;
@@ -3336,7 +3338,7 @@ export class Renderer {
 
   /**
    * Punch nearer occluders out of the current layer. Only cells whose screen box
-   * meets the ring are drawn. A taller cell punches its prism, railings and prop.
+   * meets the mark are drawn. A taller cell punches its prism, railings and prop.
    * A cell at or below the unit's floor punches only its railings and prop, never
    * the top or the walls. A board object that rises above the floor is punched too.
    * The re-run must not keep a change to time (no counters, stamps, or caches).
@@ -3350,7 +3352,17 @@ export class Renderer {
     drawn: Unit[],
     index: number,
     box: ScreenRect,
+    pass: "bodies" | "ground",
   ): void {
+    if (pass === "bodies") {
+      for (let i = index + 1; i < drawn.length; i++) {
+        const stamp = this.bodyStamps.get(drawn[i].id);
+        if (!stamp || !(stamp.fig.w > 0) || !(stamp.fig.h > 0)) continue;
+        if (!rectsOverlap(stamp.fig, box)) continue;
+        this.eraseStamp(stamp);
+      }
+      return;
+    }
     const start = cellIndex.get(key(u.x, u.y));
     const floor = map.heightAt(u.x, u.y);
     if (start != null) {
@@ -3371,12 +3383,6 @@ export class Renderer {
           if (obj) this.drawBoardObj(obj, map);
         });
       }
-    }
-    for (let i = index + 1; i < drawn.length; i++) {
-      const stamp = this.bodyStamps.get(drawn[i].id);
-      if (!stamp || !(stamp.fig.w > 0) || !(stamp.fig.h > 0)) continue;
-      if (!rectsOverlap(stamp.fig, box)) continue;
-      this.eraseStamp(stamp);
     }
   }
 
@@ -3537,31 +3543,80 @@ export class Renderer {
     ctx.restore();
   }
 
-  /** Chevron corners on the ground line under the feet. */
-  private facingChevron(u: Unit, map: GameMap, z: number, selected: boolean): Vec2[] {
+  /**
+   * Screen-space arrow around the projected ground forward vector.
+   * An away arrow (up on screen) is pushed off the figure so the head cannot be read as toward.
+   */
+  private facingArrow(
+    u: Unit,
+    map: GameMap,
+    slot: LabelSlot,
+    selected: boolean,
+  ): { tail: Vec2; tip: Vec2; pts: Vec2[] } {
     const h = map.heightAt(u.x, u.y);
     const project = this.projectAt(u.x, u.y, h, u.dir, map);
-    const k = selected ? 1.3 : 1;
-    // Same ground line as the ring under the feet (ground + FEET_DROP + RING_DROP), starting past its rim.
-    const drop = (FEET_DROP + RING_DROP) * z;
-    const r0 = 0.42;
-    return [
-      project(0, r0 + 0.27 * k, 0),
-      project(-0.17 * k, r0, 0),
-      project(0, r0 + 0.08 * k, 0),
-      project(0.17 * k, r0, 0),
-    ].map((q) => ({ x: q.x, y: q.y + drop }));
+    const origin = project(0, 0, 0);
+    const ahead = project(0, 1, 0);
+    let vx = ahead.x - origin.x;
+    let vy = ahead.y - origin.y;
+    const mag = Math.hypot(vx, vy);
+    if (mag > 1e-6) {
+      vx /= mag;
+      vy /= mag;
+    } else {
+      vx = 0;
+      vy = 1;
+    }
+    const L = Math.max(12, (selected ? 28 : 22) * slot.z);
+    const headLen = 0.5 * L;
+    const headHalf = 0.32 * L;
+    const shaftHalf = 0.09 * L;
+    const denom = Math.hypot(vx / slot.ringRx, vy / slot.ringRy);
+    const rim = denom > 1e-8 ? 1 / denom : 0;
+    let dist = rim;
+    if (vy < 0) {
+      const fig = this.bodyStamps.get(u.id)?.fig;
+      if (fig && fig.w > 0 && fig.h > 0) {
+        const left = fig.x - 2;
+        const right = fig.x + fig.w + 2;
+        const xAt = slot.ringX + dist * vx;
+        if (xAt > left && xAt < right) {
+          // Straight up does not move x, so the cap is the only stop.
+          if (vx === 0) dist = rim * 2;
+          else {
+            const edge = vx > 0 ? right : left;
+            const need = (edge - slot.ringX) / vx;
+            dist = Math.min(rim * 2, Math.max(rim, need));
+          }
+        }
+      }
+    }
+    const tail = { x: slot.ringX + dist * vx, y: slot.ringY + dist * vy };
+    const tip = { x: tail.x + L * vx, y: tail.y + L * vy };
+    const px = -vy;
+    const py = vx;
+    const neckX = tip.x - headLen * vx;
+    const neckY = tip.y - headLen * vy;
+    const side = (x: number, y: number, s: number): Vec2 => ({ x: x + s * px, y: y + s * py });
+    return {
+      tail,
+      tip,
+      pts: [
+        side(tail.x, tail.y, shaftHalf),
+        side(neckX, neckY, shaftHalf),
+        side(neckX, neckY, headHalf),
+        tip,
+        side(neckX, neckY, -headHalf),
+        side(neckX, neckY, -shaftHalf),
+        side(tail.x, tail.y, -shaftHalf),
+      ],
+    };
   }
 
-  /**
-   * Ground facing chevron, in the 0.2.1/0.6.1 spirit: a dark-outlined arrowhead in the unit's colour.
-   * The bodies grew taller than the 0.6.1 rigs and hid the old 0.11-tile wedge under their feet, so the
-   * chevron now sits just outside the ring and is drawn over the body. Projected on the ground plane, so
-   * it follows yaw and pitch. The selected unit gets a bigger, fully opaque one with a light rim.
-   */
-  private drawFacingWedge(u: Unit, map: GameMap, z: number, accent: string, selected: boolean): void {
+  private drawFacingWedge(u: Unit, map: GameMap, slot: LabelSlot, selected: boolean): void {
     const ctx = this.ctx;
-    const pts = this.facingChevron(u, map, z, selected);
+    const z = slot.z;
+    const pts = this.facingArrow(u, map, slot, selected).pts;
     ctx.save();
     ctx.globalAlpha = selected ? 1 : 0.88;
     ctx.beginPath();
@@ -3572,7 +3627,7 @@ export class Renderer {
     ctx.strokeStyle = "rgba(6,6,10,0.95)";
     ctx.lineWidth = Math.max(2.4, 2.8 * z) * (selected ? 1.15 : 1);
     ctx.stroke();
-    ctx.fillStyle = accent;
+    ctx.fillStyle = slot.accent;
     ctx.fill();
     if (selected) {
       ctx.strokeStyle = "rgba(255,255,255,0.9)";
