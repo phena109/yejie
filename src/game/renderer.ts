@@ -572,7 +572,7 @@ const UNIT_LOWER_TOP = 0.45;
 const UNIT_LOWER_STAMP_W = 0.55;
 /** And at least this fraction of the ring diameter (2 * RING_RX * scale). */
 const UNIT_LOWER_RING_W = 0.8;
-/** Occlusion ghost. Full-opacity source, drawn over whatever hid the body. */
+/** Occlusion ghost. Only the pixels a nearer occluder covers are kept. */
 const GHOST_ALPHA = 0.45;
 /** Ghost only when this top fraction of the stamp is covered. Feet behind a ledge do not count. */
 const GHOST_HEAD = 0.35;
@@ -846,6 +846,9 @@ export class Renderer {
   /** Board-sized scratch for one unit's ring and facing arrow. Reused across units and frames. */
   private overlayCanvas: HTMLCanvasElement | null = null;
   private overlayCtx: CanvasRenderingContext2D | null = null;
+  /** Union of occluder shapes for one ghost. destination-in keeps only the covered pixels. */
+  private maskCanvas: HTMLCanvasElement | null = null;
+  private maskCtx: CanvasRenderingContext2D | null = null;
   /** Placed name plates from the last draw(), in canvas coordinates. */
   labelRects: { id: string; x: number; y: number; w: number; h: number }[] = [];
   /** Unit under the pointer. Pointer moves refresh this; a preset value is kept while the pointer is outside. */
@@ -2491,7 +2494,7 @@ export class Renderer {
     return false;
   }
 
-  private drawGhost(stamp: BodyStamp, color: string): void {
+  private drawGhost(stamp: BodyStamp, color: string, mask: () => void): void {
     const sw = Math.max(1, Math.round(stamp.sw));
     const sh = Math.max(1, Math.round(stamp.sh));
     if (!(stamp.dw > 0) || !(stamp.dh > 0)) return;
@@ -2524,11 +2527,35 @@ export class Renderer {
     g.fillRect(0, 0, sw, sh);
     g.restore();
 
-    const ctx = this.ctx;
-    ctx.save();
-    ctx.globalAlpha = GHOST_ALPHA;
-    ctx.drawImage(scratch, 0, 0, sw, sh, stamp.dx, stamp.dy, stamp.dw, stamp.dh);
-    ctx.restore();
+    const main = this.ctx;
+    const layer = this.overlayLayer();
+    const maskLayer = this.boardLayer("mask");
+    if (!layer || !maskLayer) {
+      main.save();
+      main.globalAlpha = GHOST_ALPHA;
+      main.drawImage(scratch, 0, 0, sw, sh, stamp.dx, stamp.dy, stamp.dw, stamp.dh);
+      main.restore();
+      return;
+    }
+    layer.g.globalAlpha = GHOST_ALPHA;
+    layer.g.drawImage(scratch, 0, 0, sw, sh, stamp.dx, stamp.dy, stamp.dw, stamp.dh);
+    layer.g.globalAlpha = 1;
+    this.ctx = maskLayer.g;
+    try {
+      mask();
+    } finally {
+      this.ctx = main;
+    }
+    layer.g.save();
+    layer.g.globalCompositeOperation = "destination-in";
+    layer.g.globalAlpha = 1;
+    layer.g.drawImage(maskLayer.canvas, 0, 0, this.w, this.h);
+    layer.g.restore();
+    main.save();
+    main.globalAlpha = 1;
+    main.globalCompositeOperation = "source-over";
+    main.drawImage(layer.canvas, 0, 0, this.w, this.h);
+    main.restore();
   }
 
   private drawOccludedGhost(
@@ -2542,7 +2569,9 @@ export class Renderer {
     if (!stamp) return;
     const body = stamp.fig;
     if (!this.bodyOccluded(u, map, cells, cellIndex, objAt, body)) return;
-    this.drawGhost(stamp, factionColor(u));
+    this.drawGhost(stamp, factionColor(u), () => {
+      this.paintNearOccluders(u, map, cells, cellIndex, objAt, body.w > 0 && body.h > 0 ? body : null);
+    });
   }
 
   private drawMapDoll(
@@ -3322,14 +3351,23 @@ export class Renderer {
 
   /** Scratch matching the board canvas, in the same pixel space as this.ctx. */
   private overlayLayer(): { g: CanvasRenderingContext2D; canvas: HTMLCanvasElement } | null {
-    let scratch = this.overlayCanvas;
-    let g = this.overlayCtx;
+    return this.boardLayer("overlay");
+  }
+
+  private boardLayer(which: "overlay" | "mask"): { g: CanvasRenderingContext2D; canvas: HTMLCanvasElement } | null {
+    let scratch = which === "overlay" ? this.overlayCanvas : this.maskCanvas;
+    let g = which === "overlay" ? this.overlayCtx : this.maskCtx;
     if (!scratch || !g) {
       scratch = document.createElement("canvas");
       g = scratch.getContext("2d");
       if (!g) return null;
-      this.overlayCanvas = scratch;
-      this.overlayCtx = g;
+      if (which === "overlay") {
+        this.overlayCanvas = scratch;
+        this.overlayCtx = g;
+      } else {
+        this.maskCanvas = scratch;
+        this.maskCtx = g;
+      }
     }
     const bw = Math.max(1, this.canvas.width);
     const bh = Math.max(1, this.canvas.height);
@@ -3362,13 +3400,7 @@ export class Renderer {
     return { x: minX - pad, y: minY - pad, w: maxX - minX + pad * 2, h: maxY - minY + pad * 2 };
   }
 
-  /**
-   * Punch nearer occluders out of the current layer. Only cells whose screen box
-   * meets the mark are drawn. A taller cell punches its prism, railings and prop.
-   * A cell at or below the unit's floor punches only its railings and prop, never
-   * the top or the walls. A board object that rises above the floor is punched too.
-   * The re-run must not keep a change to time (no counters, stamps, or caches).
-   */
+  /** Bodies punch the ring before the arrow. Ground punches both, in the caller's layer. */
   private eraseRingOccluders(
     u: Unit,
     map: GameMap,
@@ -3389,9 +3421,29 @@ export class Renderer {
       }
       return;
     }
+    this.punchOut(() => this.paintNearOccluders(u, map, cells, cellIndex, objAt, box));
+  }
+
+  /**
+   * Later cells above this unit's floor. A taller cell paints its prism, railings
+   * and prop. A lower cell paints only railings and prop, never the top or the walls.
+   * A rising object is painted too. The caller sets the composite mode. Time is put
+   * back so a re-run cannot move the clock. Bodies are not part of this mask.
+   */
+  private paintNearOccluders(
+    u: Unit,
+    map: GameMap,
+    cells: Vec2[],
+    cellIndex: Map<string, number>,
+    objAt: Map<string, BoardObj>,
+    box: ScreenRect | null,
+  ): void {
     const start = cellIndex.get(key(u.x, u.y));
+    if (start == null) return;
     const floor = map.heightAt(u.x, u.y);
-    if (start != null) {
+    const time = this.time;
+    const g = this.ctx;
+    try {
       for (let i = start + 1; i < cells.length; i++) {
         const c = cells[i];
         const t = map.tiles[c.y][c.x];
@@ -3401,14 +3453,18 @@ export class Renderer {
         const rail = this.hasRailings(t, map);
         const rises = o != null && t.h + this.objectRise(o) > floor;
         if (!tall && !prop && !rail && !rises) continue;
-        if (!rectsOverlap(this.cellOccluderBounds(t, map, prop || rises), box)) continue;
-        const obj = rises ? o : undefined;
-        this.punchOut(() => {
+        if (box && !rectsOverlap(this.cellOccluderBounds(t, map, prop || rises), box)) continue;
+        g.save();
+        try {
           if (tall) this.fillPrism(t);
           if (tall || prop || rail) this.drawTileStanding(t, map);
-          if (obj) this.drawBoardObj(obj, map);
-        });
+          if (rises && o) this.drawBoardObj(o, map);
+        } finally {
+          g.restore();
+        }
       }
+    } finally {
+      this.time = time;
     }
   }
 
