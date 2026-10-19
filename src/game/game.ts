@@ -1751,7 +1751,6 @@ export class Game {
       u.actedThisTurn = false;
       u.dead = false;
     }
-    this.renderer.centerOn(this.units, this.map);
     this.selectUnit(priya);
   }
 
@@ -1797,7 +1796,6 @@ export class Game {
     pike.hp = pike.maxHp;
     mara.dir = 1;
     dana.dir = 0;
-    this.renderer.centerOn(this.units, this.map);
     this.selectUnit(mara);
   }
 
@@ -1874,7 +1872,6 @@ export class Game {
       u.movedThisTurn = false;
       u.actedThisTurn = false;
     }
-    this.renderer.centerOn(this.units, this.map);
     this.selectUnit(mara);
   }
 
