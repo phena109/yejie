@@ -677,9 +677,23 @@ function greyerAccent(hex: string): string {
   return `#${h(r)}${h(g)}${h(b)}`;
 }
 
+/** Tile highlights are not occluders. A mask re-run of drawTile uses this empty set. */
+const NO_CELLS = new Set<string>();
+const BARE_OVERLAYS: DrawOverlays = {
+  move: NO_CELLS,
+  area: NO_CELLS,
+  hot: NO_CELLS,
+  areaKind: null,
+  selected: null,
+  target: null,
+  inspect: null,
+  phase: "select",
+};
+
 export class Renderer {
   readonly canvas: HTMLCanvasElement;
-  readonly ctx: CanvasRenderingContext2D;
+  /** Pointed at the ring scratch while a mask is punched, then restored. */
+  ctx: CanvasRenderingContext2D;
   cam: Cam = { x: -224, y: 180, zoom: 0.7 };
   w = 390;
   h = 700;
@@ -733,6 +747,9 @@ export class Renderer {
   private readonly rigSnaps = new Map<string, HTMLCanvasElement>();
   private ghostCanvas: HTMLCanvasElement | null = null;
   private ghostCtx: CanvasRenderingContext2D | null = null;
+  /** Board-sized scratch for one unit's ring and chevron. Reused across units and frames. */
+  private overlayCanvas: HTMLCanvasElement | null = null;
+  private overlayCtx: CanvasRenderingContext2D | null = null;
   /** Placed name plates from the last draw(), in canvas coordinates. */
   labelRects: { id: string; x: number; y: number; w: number; h: number }[] = [];
   /** Unit under the pointer. Pointer moves refresh this; a preset value is kept while the pointer is outside. */
@@ -1370,8 +1387,9 @@ export class Renderer {
     // Replay the cached billboard before rings so the label still sits on top.
     for (const u of drawn) this.drawOccludedGhost(u, map, cells, cellIndex, objAt);
 
-    // Rings and names paint after tiles, or a nearer wall clips the feet label.
-    this.drawUnitOverlays(drawn, map, overlays);
+    // Rings and chevrons paint after tiles, then nearer blocks punch them out.
+    // Name plates stay above that, or a nearer wall would clip the label.
+    this.drawUnitOverlays(drawn, map, overlays, cells, cellIndex, objAt);
 
     this.drawVignette();
     this.drawFloats(floats, map);
@@ -2588,7 +2606,14 @@ export class Renderer {
   }
 
   /** Team rings stay on the tile centre. Plates nudge sideways before they lift. */
-  private drawUnitOverlays(drawn: Unit[], map: GameMap, overlays: DrawOverlays): void {
+  private drawUnitOverlays(
+    drawn: Unit[],
+    map: GameMap,
+    overlays: DrawOverlays,
+    cells: Vec2[],
+    cellIndex: Map<string, number>,
+    objAt: Map<string, BoardObj>,
+  ): void {
     const n = drawn.length;
     this.overlayCount = n;
     this.placedCount = 0;
@@ -2709,10 +2734,12 @@ export class Renderer {
       }
     }
 
-    for (let i = 0; i < n; i++) this.paintUnitRing(pool[i]);
-    // Facing chevrons paint with the rings, after every tile: drawn inside the cell loop, a chevron that
-    // points toward the viewer (旋轉 2/3 at M1 start) lands on the next tile and that tile covered it.
-    for (let i = 0; i < n; i++) this.drawFacingWedge(drawn[i], map, z, factionColor(drawn[i]), overlays.selected?.id === drawn[i].id);
+    // Chevrons stay in this pass: one that points at the viewer spills onto the next tile, and a
+    // same-height tile drawn later used to cover it. Nearer blocks, props, and bodies punch the
+    // ring and the chevron back out. Plates and status icons stay on top.
+    for (let i = 0; i < n; i++) {
+      this.paintMaskedRing(drawn[i], pool[i], map, overlays, cells, cellIndex, objAt, drawn, i);
+    }
     for (let i = 0; i < n; i++) this.paintUnitLabel(pool[i]);
     this.paintStatusIcons();
 
@@ -3002,6 +3029,200 @@ export class Renderer {
     this.statusCount++;
   }
 
+  /**
+   * Ring and chevron go to a scratch layer, then nearer geometry is punched out
+   * with destination-out. The selected unit uses the same path.
+   */
+  private paintMaskedRing(
+    u: Unit,
+    slot: LabelSlot,
+    map: GameMap,
+    overlays: DrawOverlays,
+    cells: Vec2[],
+    cellIndex: Map<string, number>,
+    objAt: Map<string, BoardObj>,
+    drawn: Unit[],
+    index: number,
+  ): void {
+    const selected = overlays.selected?.id === u.id;
+    const layer = this.overlayLayer();
+    if (!layer) {
+      this.paintUnitRing(slot);
+      this.drawFacingWedge(u, map, slot.z, slot.accent, selected);
+      return;
+    }
+    const main = this.ctx;
+    this.ctx = layer.g;
+    try {
+      layer.g.globalCompositeOperation = "source-over";
+      layer.g.globalAlpha = 1;
+      this.paintUnitRing(slot);
+      this.drawFacingWedge(u, map, slot.z, slot.accent, selected);
+      this.eraseRingOccluders(u, map, cells, cellIndex, objAt, drawn, index, this.markBounds(u, slot, map, selected));
+    } finally {
+      this.ctx = main;
+    }
+    main.save();
+    main.globalAlpha = 1;
+    main.globalCompositeOperation = "source-over";
+    main.drawImage(layer.canvas, 0, 0, this.w, this.h);
+    main.restore();
+  }
+
+  /** Scratch matching the board canvas, in the same pixel space as this.ctx. */
+  private overlayLayer(): { g: CanvasRenderingContext2D; canvas: HTMLCanvasElement } | null {
+    let scratch = this.overlayCanvas;
+    let g = this.overlayCtx;
+    if (!scratch || !g) {
+      scratch = document.createElement("canvas");
+      g = scratch.getContext("2d");
+      if (!g) return null;
+      this.overlayCanvas = scratch;
+      this.overlayCtx = g;
+    }
+    const bw = Math.max(1, this.canvas.width);
+    const bh = Math.max(1, this.canvas.height);
+    if (scratch.width !== bw || scratch.height !== bh) {
+      scratch.width = bw;
+      scratch.height = bh;
+    }
+    g.setTransform(1, 0, 0, 1, 0, 0);
+    g.globalAlpha = 1;
+    g.globalCompositeOperation = "source-over";
+    g.clearRect(0, 0, scratch.width, scratch.height);
+    const t = this.ctx.getTransform();
+    g.setTransform(t.a, t.b, t.c, t.d, t.e, t.f);
+    return { g, canvas: scratch };
+  }
+
+  /** Screen box of the ring ellipse plus the facing chevron, with a stroke pad. */
+  private markBounds(u: Unit, s: LabelSlot, map: GameMap, selected: boolean): ScreenRect {
+    let minX = s.ringX - s.ringRx;
+    let maxX = s.ringX + s.ringRx;
+    let minY = s.ringY - s.ringRy;
+    let maxY = s.ringY + s.ringRy;
+    for (const p of this.facingChevron(u, map, s.z, selected)) {
+      if (p.x < minX) minX = p.x;
+      if (p.x > maxX) maxX = p.x;
+      if (p.y < minY) minY = p.y;
+      if (p.y > maxY) maxY = p.y;
+    }
+    const pad = Math.max(3, 3.2 * s.z);
+    return { x: minX - pad, y: minY - pad, w: maxX - minX + pad * 2, h: maxY - minY + pad * 2 };
+  }
+
+  /**
+   * Punch nearer occluders out of the current layer. Only cells whose screen box
+   * meets the ring are drawn. drawTile and drawBoardObj paint the silhouette and
+   * must not keep a change to time (they do not touch counters, stamps, or caches).
+   */
+  private eraseRingOccluders(
+    u: Unit,
+    map: GameMap,
+    cells: Vec2[],
+    cellIndex: Map<string, number>,
+    objAt: Map<string, BoardObj>,
+    drawn: Unit[],
+    index: number,
+    box: ScreenRect,
+  ): void {
+    const start = cellIndex.get(key(u.x, u.y));
+    const floor = map.heightAt(u.x, u.y);
+    if (start != null) {
+      for (let i = start + 1; i < cells.length; i++) {
+        const c = cells[i];
+        const t = map.tiles[c.y][c.x];
+        const o = objAt.get(key(c.x, c.y));
+        const tall = t.h > floor;
+        const prop = t.prop != null;
+        const rises = o != null && t.h + this.objectRise(o) > floor;
+        if (!tall && !prop && !rises) continue;
+        if (!rectsOverlap(this.cellOccluderBounds(t, prop || rises), box)) continue;
+        if (tall) this.punchOut(() => this.fillPrism(t));
+        if (prop || rises) {
+          const obj = rises ? o : undefined;
+          this.punchOut(() => {
+            if (prop) this.drawTile(t, map, BARE_OVERLAYS);
+            if (obj) this.drawBoardObj(obj, map);
+          });
+        }
+      }
+    }
+    for (let i = index + 1; i < drawn.length; i++) {
+      const stamp = this.bodyStamps.get(drawn[i].id);
+      if (!stamp || !(stamp.dw > 0) || !(stamp.dh > 0)) continue;
+      if (!rectsOverlap({ x: stamp.dx, y: stamp.dy, w: stamp.dw, h: stamp.dh }, box)) continue;
+      this.eraseStamp(stamp);
+    }
+  }
+
+  /** Prism top plus the two front faces. Opaque fill, so destination-out clears the shape. */
+  private fillPrism(t: Tile): void {
+    const ctx = this.ctx;
+    const { drop, top } = this.topMetrics(t.x, t.y, t.h);
+    ctx.fillStyle = "#000";
+    this.quadPath(top);
+    ctx.fill();
+    for (const face of this.frontFaces(top, drop)) {
+      this.quadPath(face);
+      ctx.fill();
+    }
+  }
+
+  /** Screen box of a tile prism. Props and rising objects also pad above the top. */
+  private cellOccluderBounds(t: Tile, pad: boolean): ScreenRect {
+    const { drop, top } = this.topMetrics(t.x, t.y, t.h);
+    let minX = Infinity;
+    let minY = Infinity;
+    let maxX = -Infinity;
+    let maxY = -Infinity;
+    for (const p of top) {
+      if (p.x < minX) minX = p.x;
+      if (p.x > maxX) maxX = p.x;
+      if (p.y < minY) minY = p.y;
+      if (p.y + drop > maxY) maxY = p.y + drop;
+    }
+    if (pad) {
+      const z = this.cam.zoom;
+      minX -= 22 * z;
+      maxX += 22 * z;
+      minY -= 36 * z;
+      maxY += 20 * z;
+    }
+    return { x: minX, y: minY, w: Math.max(0, maxX - minX), h: Math.max(0, maxY - minY) };
+  }
+
+  /** destination-out paint. Puts this.time back so a tile re-run cannot move the clock. */
+  private punchOut(draw: () => void): void {
+    const g = this.ctx;
+    const time = this.time;
+    g.save();
+    g.globalCompositeOperation = "destination-out";
+    g.globalAlpha = 1;
+    try {
+      draw();
+    } finally {
+      this.time = time;
+      g.restore();
+    }
+  }
+
+  /** Body silhouette, mirrored the same way drawMapDoll drew it. */
+  private eraseStamp(stamp: BodyStamp): void {
+    const g = this.ctx;
+    g.save();
+    g.globalCompositeOperation = "destination-out";
+    g.globalAlpha = 1;
+    if (stamp.mirror) {
+      g.translate(stamp.dx + stamp.dw, stamp.dy);
+      g.scale(-1, 1);
+      g.drawImage(stamp.source, 0, 0, stamp.sw, stamp.sh, 0, 0, stamp.dw, stamp.dh);
+    } else {
+      g.drawImage(stamp.source, 0, 0, stamp.sw, stamp.sh, stamp.dx, stamp.dy, stamp.dw, stamp.dh);
+    }
+    g.restore();
+  }
+
   private paintUnitRing(s: LabelSlot): void {
     const ctx = this.ctx;
     ctx.save();
@@ -3071,6 +3292,22 @@ export class Renderer {
     ctx.restore();
   }
 
+  /** Chevron corners on the ground line under the feet. */
+  private facingChevron(u: Unit, map: GameMap, z: number, selected: boolean): Vec2[] {
+    const h = map.heightAt(u.x, u.y);
+    const project = this.projectAt(u.x, u.y, h, u.dir, map);
+    const k = selected ? 1.3 : 1;
+    // Same ground line as the ring under the feet (ground + FEET_DROP + RING_DROP), starting past its rim.
+    const drop = (FEET_DROP + RING_DROP) * z;
+    const r0 = 0.42;
+    return [
+      project(0, r0 + 0.27 * k, 0),
+      project(-0.17 * k, r0, 0),
+      project(0, r0 + 0.08 * k, 0),
+      project(0.17 * k, r0, 0),
+    ].map((q) => ({ x: q.x, y: q.y + drop }));
+  }
+
   /**
    * Ground facing chevron, in the 0.2.1/0.6.1 spirit: a dark-outlined arrowhead in the unit's colour.
    * The bodies grew taller than the 0.6.1 rigs and hid the old 0.11-tile wedge under their feet, so the
@@ -3079,18 +3316,7 @@ export class Renderer {
    */
   private drawFacingWedge(u: Unit, map: GameMap, z: number, accent: string, selected: boolean): void {
     const ctx = this.ctx;
-    const h = map.heightAt(u.x, u.y);
-    const project = this.projectAt(u.x, u.y, h, u.dir, map);
-    const k = selected ? 1.3 : 1;
-    // Same ground line as the ring under the feet (ground + FEET_DROP + RING_DROP), starting past its rim.
-    const drop = (FEET_DROP + RING_DROP) * z;
-    const r0 = 0.42;
-    const pts = [
-      project(0, r0 + 0.27 * k, 0),
-      project(-0.17 * k, r0, 0),
-      project(0, r0 + 0.08 * k, 0),
-      project(0.17 * k, r0, 0),
-    ].map((q) => ({ x: q.x, y: q.y + drop }));
+    const pts = this.facingChevron(u, map, z, selected);
     ctx.save();
     ctx.globalAlpha = selected ? 1 : 0.88;
     ctx.beginPath();
