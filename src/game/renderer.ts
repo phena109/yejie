@@ -919,8 +919,9 @@ export class Renderer {
 
   /**
    * Painter order for tiles, props, and the units that stand on them.
-   * Depth is the screen-y of the standing point (the foot, before the shared
-   * feet drop). Higher y draws later. Ties break on screen-x, then grid position.
+   * Depth is the screen-y of the ground point (worldToScreen with height left
+   * out), the same key hitTile uses. Higher y draws later, so a tall nearer
+   * prism paints after the cell behind it. Ties break on screen-x, then grid position.
    */
   private cellsInDrawOrder(map: GameMap): Vec2[] {
     const cells: Vec2[] = [];
@@ -928,8 +929,8 @@ export class Renderer {
       for (let x = 0; x < map.w; x++) cells.push({ x, y });
     }
     cells.sort((a, b) => {
-      const pa = this.worldToScreen(a.x, a.y, map.heightAt(a.x, a.y));
-      const pb = this.worldToScreen(b.x, b.y, map.heightAt(b.x, b.y));
+      const pa = this.worldToScreen(a.x, a.y, 0);
+      const pb = this.worldToScreen(b.x, b.y, 0);
       return this.cmpScreenDepth(pa.y, pa.x, a.y, a.x, pb.y, pb.x, b.y, b.x);
     });
     return cells;
@@ -954,7 +955,7 @@ export class Renderer {
     return aId2 - bId2;
   }
 
-  /** Same depth key as the cell list: foot screen-y, then screen-x, then unit id. */
+  /** Units on one cell, back to front: foot screen-y, then screen-x, then unit id. */
   private orderUnits(list: Unit[], map: GameMap): void {
     list.sort((a, b) => {
       const pa = this.unitPose(a, map);
