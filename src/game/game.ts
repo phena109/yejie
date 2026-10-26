@@ -213,6 +213,7 @@ export class Game {
   private vnText = el<HTMLElement>("vn-text");
   private titleBuild = el<HTMLElement>("title-build");
   private camHint = el<HTMLElement>("cam-hint");
+  private readonly hudFloats: readonly HTMLElement[] = [this.btnEnd, this.btnRotate, this.btnPause, this.btnBag, this.camHint];
   private pendingSlot: number | null = null;
   private pendingQuit = false;
   private pendingJump: number | null = null;
@@ -437,6 +438,7 @@ export class Game {
         },
         this.floats,
       );
+      this.fadeHudOverBodies();
     };
     this.syncUi();
     const run = () => {
@@ -459,6 +461,30 @@ export class Game {
       requestAnimationFrame(loop);
     };
     run();
+  }
+
+  private fadeHudOverBodies(): void {
+    const board = this.renderer.canvas.getBoundingClientRect();
+    for (const node of this.hudFloats) {
+      if (node.hidden) continue;
+      const box = node.getBoundingClientRect();
+      let over = false;
+      for (const stamp of this.renderer.bodyStamps.values()) {
+        const fig = stamp.fig;
+        // fig is canvas CSS pixels from the board's top-left, not the viewport.
+        const left = board.left + fig.x;
+        const top = board.top + fig.y;
+        const x0 = Math.max(box.left, left);
+        const x1 = Math.min(box.right, left + fig.w);
+        const y0 = Math.max(box.top, top);
+        const y1 = Math.min(box.bottom, top + fig.h);
+        if (x1 > x0 && y1 > y0) {
+          over = true;
+          break;
+        }
+      }
+      node.classList.toggle("over-unit", over);
+    }
   }
 
   applyHash(): void {

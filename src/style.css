@@ -301,6 +301,26 @@ body {
   display: none;
 }
 
+#cam-hint.over-unit,
+#btn-bag.over-unit,
+#btn-rotate.over-unit,
+#btn-pause.over-unit,
+#btn-end.over-unit {
+  opacity: 0.35;
+  transition: opacity 150ms;
+}
+
+#btn-bag.over-unit:hover,
+#btn-bag.over-unit:focus-visible,
+#btn-rotate.over-unit:hover,
+#btn-rotate.over-unit:focus-visible,
+#btn-pause.over-unit:hover,
+#btn-pause.over-unit:focus-visible,
+#btn-end.over-unit:hover,
+#btn-end.over-unit:focus-visible {
+  opacity: 1;
+}
+
 #dock {
   z-index: 8;
   display: grid;
