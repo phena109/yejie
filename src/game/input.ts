@@ -158,5 +158,6 @@ export class PointerInput {
     cam.zoom = Math.min(this.renderer.maxZoom(), Math.max(this.renderer.minZoom(), cam.zoom * factor));
     cam.x = wx - (sx - this.renderer.w / 2) / cam.zoom;
     cam.y = wy - (sy - this.renderer.h / 2) / cam.zoom;
+    if (factor < 1) this.renderer.easeTowardFit();
   }
 }

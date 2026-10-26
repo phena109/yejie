@@ -1461,6 +1461,21 @@ export class Renderer {
     return Math.min(this.maxZoom(), Math.max(ZOOM_MIN, 0.9 * fit));
   }
 
+  /** Cursor-anchored zoom-out keeps the pan, so near the fit pull it back to centre. */
+  easeTowardFit(): void {
+    const map = this.boardMap;
+    const fit = this.fitZoom();
+    if (!map || fit == null) return;
+    const b = this.boardBounds(map);
+    if (!b) return;
+    const hi = 1.5 * fit;
+    const t = Math.min(1, Math.max(0, (hi - this.cam.zoom) / (hi - fit)));
+    const cx = (b.minX + b.maxX) / 2;
+    const cy = (b.minY + b.maxY) / 2;
+    this.cam.x += (cx - this.cam.x) * t;
+    this.cam.y += (cy - this.cam.y) * t;
+  }
+
   /**
    * Frame the whole board at the current yaw and pitch.
    * Bounds are every tile's top corners (isoOf) plus the prism base (topMetrics.drop),
