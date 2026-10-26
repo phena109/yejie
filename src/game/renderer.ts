@@ -1339,13 +1339,19 @@ export class Renderer {
 
   rotate(map: GameMap): void {
     this.syncMap(map);
+    // A fitted board recentres on its silhouette so yaw does not slide it.
+    // Zoomed in, the ground point under the screen centre stays put.
+    if (this.boardFits(map)) {
+      this.yaw = nextYaw(this.yaw);
+      const b = this.boardBounds(map);
+      if (!b) return;
+      this.cam.x = (b.minX + b.maxX) / 2;
+      this.cam.y = (b.minY + b.maxY) / 2;
+      return;
+    }
+    const ground = this.screenToGrid(this.w / 2, this.h / 2);
     this.yaw = nextYaw(this.yaw);
-    // Fit frames the silhouette, not the ground under the crosshair. That ground
-    // point sits off the board centre, so yaw swings the board sideways.
-    const b = this.boardBounds(map);
-    if (!b) return;
-    this.cam.x = (b.minX + b.maxX) / 2;
-    this.cam.y = (b.minY + b.maxY) / 2;
+    this.lockGridToScreen(ground.x, ground.y, 0, this.w / 2, this.h / 2);
   }
 
   centerOn(units: Unit[], map: GameMap): void {
