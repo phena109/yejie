@@ -1339,12 +1339,13 @@ export class Renderer {
 
   rotate(map: GameMap): void {
     this.syncMap(map);
-    const focus = this.hitTile(this.w / 2, this.h / 2, map) ?? { x: Math.floor(map.w / 2), y: Math.floor(map.h / 2) };
     this.yaw = nextYaw(this.yaw);
-    const h = map.heightAt(focus.x, focus.y);
-    const p = this.isoOf(focus.x, focus.y, h);
-    this.cam.x = p.x;
-    this.cam.y = p.y - 24;
+    // Fit frames the silhouette, not the ground under the crosshair. That ground
+    // point sits off the board centre, so yaw swings the board sideways.
+    const b = this.boardBounds(map);
+    if (!b) return;
+    this.cam.x = (b.minX + b.maxX) / 2;
+    this.cam.y = (b.minY + b.maxY) / 2;
   }
 
   centerOn(units: Unit[], map: GameMap): void {
