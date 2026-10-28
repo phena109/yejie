@@ -239,7 +239,8 @@ export class Game {
     this.renderer = new Renderer(canvas);
     precacheRigs();
     this.input = new PointerInput(canvas, this.renderer);
-    this.input.onTap = (p, client) => this.onTap(p, client);
+    this.input.onTap = (p, client, pointerType) => this.onTap(p, client, pointerType);
+    this.input.onHover = (p) => this.onBoardHover(p);
     this.map = new GameMap(this.mission.map);
     this.resetBattle();
     this.phase = "title";
@@ -1152,7 +1153,55 @@ export class Game {
     this.selectUnit(unit);
   }
 
-  private onTap(p: Vec2, client: Vec2): void {
+  private onBoardHover(p: Vec2): void {
+    if (this.phase !== "facing" || !this.facingPick || this.busy) return;
+    const arrows = this.renderer.facingPickArrows(this.facingPick.unit, this.map);
+    const dir = this.nearestPickDir(arrows, p, this.facingPick.hover);
+    if (dir !== this.facingPick.hover) this.previewFacing(dir);
+  }
+
+  /** Arrow whose screen direction is closest to the vector from the ring centre to p. */
+  private nearestPickDir(arrows: { dir: Dir; cx: number; cy: number }[], p: Vec2, prefer: Dir): Dir {
+    if (arrows.length === 0) return prefer;
+    const cx = arrows.reduce((s, a) => s + a.cx, 0) / arrows.length;
+    const cy = arrows.reduce((s, a) => s + a.cy, 0) / arrows.length;
+    const vx = p.x - cx;
+    const vy = p.y - cy;
+    if (vx * vx + vy * vy < 1) return prefer;
+    let best = prefer;
+    let bestDot = -Infinity;
+    for (const a of arrows) {
+      const ax = a.cx - cx;
+      const ay = a.cy - cy;
+      const am = Math.hypot(ax, ay) || 1;
+      const pm = Math.hypot(vx, vy) || 1;
+      const dot = (ax * vx + ay * vy) / (am * pm);
+      if (dot > bestDot + 1e-6) {
+        bestDot = dot;
+        best = a.dir;
+      }
+    }
+    return best;
+  }
+
+  private facingTap(p: Vec2, pointerType: string): void {
+    const pick = this.facingPick;
+    if (!pick || this.busy || this.acting) return;
+    const arrows = this.renderer.facingPickArrows(pick.unit, this.map);
+    if (pointerType === "mouse") {
+      void this.confirmFacing(this.nearestPickDir(arrows, p, pick.hover));
+      return;
+    }
+    let best: { dir: Dir; d: number } | null = null;
+    for (const a of arrows) {
+      const d = Math.hypot(p.x - a.cx, p.y - a.cy);
+      if (d > a.hitR) continue;
+      if (!best || d < best.d) best = { dir: a.dir, d };
+    }
+    if (best) void this.confirmFacing(best.dir);
+  }
+
+  private onTap(p: Vec2, client: Vec2, pointerType = "mouse"): void {
     if (this.pauseOpen || this.vnOpen) return;
     // A quick extra tap on the dialogue box as it closes lands on the board; drop it so it cannot
     // deselect or move the unit the scene just selected (Mara in ?scenario=flank).
@@ -1163,8 +1212,10 @@ export class Game {
       return;
     }
     if (this.releaseHitsHud(client)) return;
-    // Facing is confirmed in a later input step. A board tap here must not select or drop a deferred tap.
-    if (this.phase === "facing") return;
+    if (this.phase === "facing") {
+      this.facingTap(p, pointerType);
+      return;
+    }
     // 確認 keeps phase "forecast" and confirmPressGen latched until the action beat ends.
     // The preview is already closed. Note a selection tap before that latch swallows it.
     if (this.busy || this.acting) {

@@ -11,7 +11,9 @@ export class PointerInput {
   private moved = 0;
   private right = false;
   private pinchGrid: { x: number; y: number } | null = null;
-  onTap: (p: Vec2, client: Vec2) => void = () => {};
+  onTap: (p: Vec2, client: Vec2, pointerType: string) => void = () => {};
+  /** Mouse move with no button down. Drag, pinch, and right-drag do not come through here. */
+  onHover: (p: Vec2, client: Vec2) => void = () => {};
 
   constructor(
     private canvas: HTMLCanvasElement,
@@ -68,7 +70,12 @@ export class PointerInput {
   }
 
   private move(e: PointerEvent): void {
-    if (!this.pointers.has(e.pointerId)) return;
+    if (!this.pointers.has(e.pointerId)) {
+      if (e.pointerType === "mouse" && this.pointers.size === 0) {
+        this.onHover(this.pos(e), { x: e.clientX, y: e.clientY });
+      }
+      return;
+    }
     const p = this.pos(e);
     const prev = this.pointers.get(e.pointerId)!;
     this.pointers.set(e.pointerId, p);
@@ -124,7 +131,7 @@ export class PointerInput {
       this.lastCentroid = null;
     }
     if (this.pointers.size === 0) {
-      if (!this.dragging && this.start && p) this.onTap(p, { x: e.clientX, y: e.clientY });
+      if (!this.dragging && this.start && p) this.onTap(p, { x: e.clientX, y: e.clientY }, e.pointerType);
       this.start = null;
       this.dragging = false;
       this.moved = 0;
