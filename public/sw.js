@@ -1,4 +1,4 @@
-const CACHE = "yejie-v32";
+const CACHE = "yejie-v33";
 
 const PRECACHE = [
   "./",
