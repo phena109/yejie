@@ -949,8 +949,9 @@ export class Game {
   }
 
   /**
-   * Drop a forecast line or a 可移動 line that no longer matches the phase.
+   * Drop a forecast line, a 可移動 line, or a facing-pick line that no longer matches the phase.
    * Executing a forecast keeps phase "forecast" until the result is written.
+   * confirmFacing closes the pick without rewriting the log, so the facing line is scrubbed here.
    */
   private scrubHints(): void {
     const play =
@@ -963,7 +964,8 @@ export class Game {
     if (!play) return;
     const previewStuck = this.phase !== "forecast" && this.log.startsWith("預覽");
     const moveStuck = this.log.includes("可移動") && !(this.phase === "select" && !!this.selected && this.canStillMove(this.selected));
-    if (!previewStuck && !moveStuck) return;
+    const facingStuck = this.phase !== "facing" && this.log.startsWith("選擇面向");
+    if (!previewStuck && !moveStuck && !facingStuck) return;
     this.log = this.hintForCurrentState();
   }
 
