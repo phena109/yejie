@@ -50,6 +50,7 @@ import {
   scaleEnemy,
   stanceOf,
   type Diff,
+  type Dir,
   type FloatText,
   type Forecast,
   type Inspect,
@@ -122,6 +123,8 @@ export class Game {
   map: GameMap;
   units: Unit[] = [];
   phase: Phase = "title";
+  /** Null outside the end-of-turn facing pick. `hover` is the highlighted dir and the live preview. */
+  facingPick: { unit: Unit; auto: Dir; hover: Dir; from: "wait" | "action" } | null = null;
   turn = 1;
   selected: Unit | null = null;
   origin: Vec2 | null = null;
@@ -390,9 +393,10 @@ export class Game {
   /** HUD buttons whose handlers return immediately while the board is busy. */
   private refreshBusyButtons(): void {
     const locked = this.busyFlag;
+    const facing = this.phase === "facing";
     const u = this.selected;
     const commanding = !!u && this.phase === "select";
-    this.btnCancel.disabled = (!u && !this.inspect && this.phase !== "itemAim") || this.phase === "enemy" || locked;
+    this.btnCancel.disabled = (!facing && !u && !this.inspect && this.phase !== "itemAim") || this.phase === "enemy" || locked;
     this.btnWait.disabled = !commanding || locked;
     this.btnSkill.disabled =
       !u ||
@@ -402,9 +406,9 @@ export class Game {
       locked ||
       (this.phase !== "select" && this.phase !== "skillAim");
     this.btnConfirm.disabled = this.phase !== "forecast" || locked || this.acting || !this.forecast;
-    this.btnEnd.disabled = locked;
+    this.btnEnd.disabled = locked || facing;
     this.btnPauseNext.disabled = locked;
-    const canUse = this.playable() && !!u && !u.actedThisTurn && !locked;
+    const canUse = this.playable() && !!u && !u.actedThisTurn && !locked && !facing;
     for (const btn of this.modalBody.querySelectorAll<HTMLButtonElement>("button.use")) btn.disabled = !canUse;
     for (const btn of this.modalBody.querySelectorAll<HTMLButtonElement>("button.ally-row")) btn.disabled = locked;
   }
@@ -851,6 +855,7 @@ export class Game {
     this.areaKind = null;
     this.forecast = null;
     this.pendingItem = null;
+    this.facingPick = null;
     this.bumpForecast();
   }
 
@@ -930,6 +935,7 @@ export class Game {
   /** Hint bar for the phase we are in after a preview closes or a command ends. */
   private hintForCurrentState(): string {
     if (this.phase === "enemy") return "敵軍行動中";
+    if (this.phase === "facing") return this.facingHint();
     const u = this.selected;
     if (this.phase === "skillAim" && u) return u.skillHint;
     if (this.phase === "itemAim" && this.pendingItem) return `${ITEMS[this.pendingItem].name}　選我軍單位`;
@@ -947,6 +953,7 @@ export class Game {
       this.phase === "skillAim" ||
       this.phase === "itemAim" ||
       this.phase === "forecast" ||
+      this.phase === "facing" ||
       this.phase === "enemy";
     if (!play) return;
     const previewStuck = this.phase !== "forecast" && this.log.startsWith("預覽");
@@ -998,7 +1005,7 @@ export class Game {
     this.tryPickup(u);
     this.setIdle();
     if (u.actedThisTurn) {
-      await this.finishUnit();
+      await this.endUnit(u, "action");
       return;
     }
     this.showCommand(u);
@@ -1122,6 +1129,9 @@ export class Game {
   private flushPendingTap(): void {
     const tap = this.pendingTap;
     if (!tap || this.busy || this.acting) return;
+    // A selection noted during the action beat has to outlive the facing pick.
+    // It replays on the first idle select frame after the unit actually finishes.
+    if (this.phase === "facing") return;
     if (this.phase !== "select" || !this.pendingTapReady()) {
       if (this.phase !== "select" && this.pendingTapReady()) this.pendingTap = null;
       return;
@@ -1149,6 +1159,8 @@ export class Game {
       return;
     }
     if (this.releaseHitsHud(client)) return;
+    // Facing is confirmed in a later input step. A board tap here must not select or drop a deferred tap.
+    if (this.phase === "facing") return;
     // 確認 keeps phase "forecast" and confirmPressGen latched until the action beat ends.
     // The preview is already closed. Note a selection tap before that latch swallows it.
     if (this.busy || this.acting) {
@@ -1428,6 +1440,10 @@ export class Game {
 
   cancel(): void {
     if (this.busy) return;
+    if (this.phase === "facing") {
+      this.cancelFacing();
+      return;
+    }
     this.dismissRangeHint();
     this.clearPendingTap();
     if (this.phase === "forecast") {
@@ -1485,7 +1501,55 @@ export class Game {
   async wait(): Promise<void> {
     if (!this.selected || this.busy) return;
     if (this.phase !== "select") return;
+    await this.endUnit(this.selected, "wait");
+  }
+
+  /** Last step of a player turn: pick a facing, then finishUnit. Enemies and escorts skip the pick. */
+  private async endUnit(u: Unit, from: "wait" | "action"): Promise<void> {
+    if (this.busy || this.phase === "enemy" || this.phase === "victory" || this.phase === "defeat" || !isPlayerControlled(u)) {
+      await this.finishUnit();
+      return;
+    }
+    this.facingPick = { unit: u, auto: u.dir, hover: u.dir, from };
+    this.phase = "facing";
+    this.inspect = null;
+    this.log = this.facingHint();
+    this.syncUi();
+  }
+
+  private facingHint(): string {
+    const back = this.facingPick?.from === "action" ? "取消回到自動面向。" : "取消回到指令。";
+    return `選擇面向，點擊或輕觸箭頭確認。${back}`;
+  }
+
+  previewFacing(dir: Dir): void {
+    const pick = this.facingPick;
+    if (!pick || this.phase !== "facing") return;
+    pick.hover = dir;
+    pick.unit.dir = dir;
+  }
+
+  async confirmFacing(dir?: Dir): Promise<void> {
+    const pick = this.facingPick;
+    if (!pick || this.phase !== "facing") return;
+    pick.unit.dir = dir ?? pick.hover;
+    this.facingPick = null;
     await this.finishUnit();
+  }
+
+  cancelFacing(): void {
+    const pick = this.facingPick;
+    if (!pick || this.phase !== "facing" || this.busy) return;
+    pick.unit.dir = pick.auto;
+    pick.hover = pick.auto;
+    if (pick.from === "wait") {
+      this.facingPick = null;
+      this.clearPendingTap();
+      this.dismissRangeHint();
+      this.showCommand(pick.unit);
+      return;
+    }
+    this.syncUi();
   }
 
   async confirm(): Promise<void> {
@@ -1533,7 +1597,7 @@ export class Game {
       this.setIdle();
       if (this.checkEnd()) return;
       if (actor.movedThisTurn) {
-        await this.finishUnit();
+        await this.endUnit(actor, "action");
         return;
       }
       this.showCommand(actor);
@@ -1588,7 +1652,7 @@ export class Game {
     this.setIdle();
     if (this.checkEnd()) return;
     if (actor.movedThisTurn) {
-      await this.finishUnit();
+      await this.endUnit(actor, "action");
       return;
     }
     this.showCommand(actor);
@@ -1620,7 +1684,7 @@ export class Game {
   }
 
   private async endTurn(): Promise<void> {
-    if (this.busy) return;
+    if (this.busy || this.phase === "facing") return;
     for (const u of this.units) if (u.team === "player" && !u.dead && !u.npc) u.acted = true;
     this.clearSel();
     this.inspect = null;
@@ -2064,7 +2128,7 @@ export class Game {
     u.anim = "idle";
     this.setIdle();
     if (u.movedThisTurn) {
-      await this.finishUnit();
+      await this.endUnit(u, "action");
       return;
     }
     this.showCommand(u);
@@ -2346,6 +2410,7 @@ export class Game {
 
   private armItem(id: ItemId): void {
     const u = this.selected;
+    if (this.phase === "facing") return;
     if (!u || u.actedThisTurn || this.busy) {
       this.log = "先選單位再用道具。";
       this.syncUi();
@@ -2413,7 +2478,7 @@ export class Game {
     await this.waitMs(220);
     this.setIdle();
     if (actor.movedThisTurn) {
-      await this.finishUnit();
+      await this.endUnit(actor, "action");
       return;
     }
     this.showCommand(actor);
@@ -2489,7 +2554,10 @@ export class Game {
       savedAt: Date.now(),
       missionIndex: this.missionIndex,
       missionName: play ? `${this.mission.number}　戰鬥中` : this.mission.number,
-      phase: this.phase === "enemy" ? "select" : this.phase === "itemAim" || this.phase === "skillAim" || this.phase === "forecast" ? "select" : this.phase,
+      phase:
+        this.phase === "enemy" || this.phase === "itemAim" || this.phase === "skillAim" || this.phase === "forecast" || this.phase === "facing"
+          ? "select"
+          : this.phase,
       turn: this.turn,
       intel: this.intel,
       power: this.power,
@@ -2517,7 +2585,7 @@ export class Game {
       maxHp: u.maxHp,
       atk: u.atk,
       def: u.def,
-      dir: u.dir,
+      dir: this.facingPick?.unit.id === u.id ? this.facingPick.auto : u.dir,
       acted: u.acted,
       skillUsed: u.skillUsed,
       skipNext: u.skipNext,
@@ -2624,7 +2692,7 @@ export class Game {
   }
 
   private autosave(): void {
-    if (this.phase === "title") return;
+    if (this.phase === "title" || this.phase === "facing") return;
     const store = loadStore();
     store.autosave = this.captureSave();
     writeStore(store);

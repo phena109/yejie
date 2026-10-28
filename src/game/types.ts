@@ -46,6 +46,7 @@ export type Phase =
   | "skillAim"
   | "itemAim"
   | "forecast"
+  | "facing"
   | "enemy"
   | "victory"
   | "defeat";
