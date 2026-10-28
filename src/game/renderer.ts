@@ -3053,6 +3053,16 @@ export class Renderer {
     for (let i = 0; i < n; i++) {
       this.paintMaskedRing(drawn[i], pool[i], map, overlays, cells, cellIndex, objAt, drawn, i);
     }
+    // Pick arrows must sit above every occluder; the ring and wedge keep the mask above.
+    const pick = overlays.facingPick;
+    if (pick) {
+      for (let i = 0; i < n; i++) {
+        if (drawn[i].id === pick.unit.id) {
+          this.drawFacingPick(pick.unit, map, pool[i], pick.dir);
+          break;
+        }
+      }
+    }
     for (let i = 0; i < n; i++) this.paintUnitLabel(pool[i]);
     this.paintStatusIcons();
 
@@ -3358,24 +3368,22 @@ export class Renderer {
     index: number,
   ): void {
     const selected = overlays.selected?.id === u.id;
-    const pickDir = overlays.facingPick?.unit.id === u.id ? overlays.facingPick.dir : null;
+    const picking = overlays.facingPick?.unit.id === u.id;
     const layer = this.overlayLayer();
     if (!layer) {
       this.paintUnitRing(slot);
-      if (pickDir != null) this.drawFacingPick(u, map, slot, pickDir);
-      else this.drawFacingWedge(u, map, slot, selected);
+      if (!picking) this.drawFacingWedge(u, map, slot, selected);
       return;
     }
     const main = this.ctx;
-    const box = this.markBounds(u, slot, map, selected, pickDir != null);
+    const box = this.markBounds(u, slot, map, selected);
     this.ctx = layer.g;
     try {
       layer.g.globalCompositeOperation = "source-over";
       layer.g.globalAlpha = 1;
       this.paintUnitRing(slot);
       this.eraseRingOccluders(u, map, cells, cellIndex, objAt, drawn, index, box, "bodies");
-      if (pickDir != null) this.drawFacingPick(u, map, slot, pickDir);
-      else this.drawFacingWedge(u, map, slot, selected);
+      if (!picking) this.drawFacingWedge(u, map, slot, selected);
       this.eraseRingOccluders(u, map, cells, cellIndex, objAt, drawn, index, box, "ground");
     } finally {
       this.ctx = main;
@@ -3422,8 +3430,8 @@ export class Renderer {
     return { g, canvas: scratch };
   }
 
-  /** Screen box of the ring ellipse plus the facing arrow (or the four pick arrows), with a stroke pad. */
-  private markBounds(u: Unit, s: LabelSlot, map: GameMap, selected: boolean, pick: boolean): ScreenRect {
+  /** Screen box of the ring ellipse plus the facing arrow, with a stroke pad. */
+  private markBounds(u: Unit, s: LabelSlot, map: GameMap, selected: boolean): ScreenRect {
     let minX = s.ringX - s.ringRx;
     let maxX = s.ringX + s.ringRx;
     let minY = s.ringY - s.ringRy;
@@ -3434,13 +3442,7 @@ export class Renderer {
       if (p.y < minY) minY = p.y;
       if (p.y > maxY) maxY = p.y;
     };
-    if (pick) {
-      for (const a of this.facingPickArrows(u, map)) {
-        for (const p of this.pickChevron(a.tail, a.tip)) grow(p);
-      }
-    } else {
-      for (const p of this.facingArrow(u, map, s, selected).pts) grow(p);
-    }
+    for (const p of this.facingArrow(u, map, s, selected).pts) grow(p);
     const pad = Math.max(3, 3.2 * s.z);
     return { x: minX - pad, y: minY - pad, w: maxX - minX + pad * 2, h: maxY - minY + pad * 2 };
   }
