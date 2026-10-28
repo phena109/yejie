@@ -36,6 +36,8 @@ export interface DrawOverlays {
   phase: Phase;
   /** Unit under the pointer. When omitted, the renderer uses its canvas pointer or `hover`. */
   hover?: Unit | null;
+  /** End-of-turn facing pick. `dir` is the highlighted arrow. Null or omitted draws the usual wedge. */
+  facingPick?: { unit: Unit; dir: Dir } | null;
 }
 
 
@@ -555,6 +557,15 @@ const RING_RY = 5.4;
 const RING_DROP = 1;
 /** Facing-arrow length, including its 12px floor, as a fraction of the previous size. */
 const FACING_ARROW_SCALE = 0.725;
+/**
+ * Pick arrows sit this many CSS px from the ring at zoom 1.
+ * 22px hits on the iso 53° spread need about 50px; 52 leaves a small gap.
+ */
+const PICK_CENTRE = 52;
+const PICK_LENGTH = 30;
+const PICK_HIT = 22;
+/** Zoom may grow the pick arrows, but a close camera should not fill the screen. */
+const PICK_SCALE_CAP = 1.6;
 /**
  * Fallback body width / billboard height, used only before a frame has cached a draw rect.
  * drawMapDoll sprites are rigDrawHeight tall and about half as wide; rigs use the same figure box.
@@ -3347,21 +3358,24 @@ export class Renderer {
     index: number,
   ): void {
     const selected = overlays.selected?.id === u.id;
+    const pickDir = overlays.facingPick?.unit.id === u.id ? overlays.facingPick.dir : null;
     const layer = this.overlayLayer();
     if (!layer) {
       this.paintUnitRing(slot);
-      this.drawFacingWedge(u, map, slot, selected);
+      if (pickDir != null) this.drawFacingPick(u, map, slot, pickDir);
+      else this.drawFacingWedge(u, map, slot, selected);
       return;
     }
     const main = this.ctx;
-    const box = this.markBounds(u, slot, map, selected);
+    const box = this.markBounds(u, slot, map, selected, pickDir != null);
     this.ctx = layer.g;
     try {
       layer.g.globalCompositeOperation = "source-over";
       layer.g.globalAlpha = 1;
       this.paintUnitRing(slot);
       this.eraseRingOccluders(u, map, cells, cellIndex, objAt, drawn, index, box, "bodies");
-      this.drawFacingWedge(u, map, slot, selected);
+      if (pickDir != null) this.drawFacingPick(u, map, slot, pickDir);
+      else this.drawFacingWedge(u, map, slot, selected);
       this.eraseRingOccluders(u, map, cells, cellIndex, objAt, drawn, index, box, "ground");
     } finally {
       this.ctx = main;
@@ -3408,17 +3422,24 @@ export class Renderer {
     return { g, canvas: scratch };
   }
 
-  /** Screen box of the ring ellipse plus the facing arrow, with a stroke pad. */
-  private markBounds(u: Unit, s: LabelSlot, map: GameMap, selected: boolean): ScreenRect {
+  /** Screen box of the ring ellipse plus the facing arrow (or the four pick arrows), with a stroke pad. */
+  private markBounds(u: Unit, s: LabelSlot, map: GameMap, selected: boolean, pick: boolean): ScreenRect {
     let minX = s.ringX - s.ringRx;
     let maxX = s.ringX + s.ringRx;
     let minY = s.ringY - s.ringRy;
     let maxY = s.ringY + s.ringRy;
-    for (const p of this.facingArrow(u, map, s, selected).pts) {
+    const grow = (p: Vec2): void => {
       if (p.x < minX) minX = p.x;
       if (p.x > maxX) maxX = p.x;
       if (p.y < minY) minY = p.y;
       if (p.y > maxY) maxY = p.y;
+    };
+    if (pick) {
+      for (const a of this.facingPickArrows(u, map)) {
+        for (const p of this.pickChevron(a.tail, a.tip)) grow(p);
+      }
+    } else {
+      for (const p of this.facingArrow(u, map, s, selected).pts) grow(p);
     }
     const pad = Math.max(3, 3.2 * s.z);
     return { x: minX - pad, y: minY - pad, w: maxX - minX + pad * 2, h: maxY - minY + pad * 2 };
@@ -3653,26 +3674,134 @@ export class Renderer {
    * Screen-space arrow around the projected ground forward vector.
    * An away arrow (up on screen) is pushed off the figure so the head cannot be read as toward.
    */
+  /** Screen forward of one grid facing. Shared by the wedge and the four pick arrows. */
+  private screenForward(u: Unit, map: GameMap, dir: Dir): Vec2 {
+    const h = map.heightAt(u.x, u.y);
+    const project = this.projectAt(u.x, u.y, h, dir, map);
+    const origin = project(0, 0, 0);
+    const ahead = project(0, 1, 0);
+    let vx = ahead.x - origin.x;
+    let vy = ahead.y - origin.y;
+    const mag = Math.hypot(vx, vy);
+    if (mag > 1e-6) return { x: vx / mag, y: vy / mag };
+    return { x: 0, y: 1 };
+  }
+
+  /**
+   * Four pick arrows in canvas CSS pixels, dir order 0..3.
+   * Centres follow screenForward. Distance grows when a flat pitch would make the hit circles meet.
+   */
+  facingPickArrows(u: Unit, map: GameMap): { dir: Dir; cx: number; cy: number; hitR: number; tail: Vec2; tip: Vec2 }[] {
+    this.syncMap(map);
+    const pose = this.unitPose(u, map);
+    const ringX = pose.x;
+    const ringY = pose.feetY + RING_DROP * pose.z;
+    const scale = Math.min(PICK_SCALE_CAP, Math.max(1, pose.z));
+    const hitR = PICK_HIT * scale;
+    const length = PICK_LENGTH * scale;
+    const fwd: Vec2[] = [];
+    for (let d = 0; d < 4; d++) fwd.push(this.screenForward(u, map, d as Dir));
+    let centreR = PICK_CENTRE * scale;
+    let minSin = 1;
+    for (let i = 0; i < 4; i++) {
+      const a = fwd[i];
+      const b = fwd[(i + 1) % 4];
+      const dot = Math.min(1, Math.max(-1, a.x * b.x + a.y * b.y));
+      const s = Math.sin(Math.acos(dot) / 2);
+      if (s < minSin) minSin = s;
+    }
+    if (minSin > 1e-3) centreR = Math.max(centreR, (hitR + 1) / minSin);
+    centreR = Math.min(centreR, 160 * scale);
+    const halfL = length / 2;
+    const out: { dir: Dir; cx: number; cy: number; hitR: number; tail: Vec2; tip: Vec2 }[] = [];
+    for (let d = 0; d < 4; d++) {
+      const vx = fwd[d].x;
+      const vy = fwd[d].y;
+      const cx = ringX + centreR * vx;
+      const cy = ringY + centreR * vy;
+      out.push({
+        dir: d as Dir,
+        cx,
+        cy,
+        hitR,
+        tail: { x: cx - halfL * vx, y: cy - halfL * vy },
+        tip: { x: cx + halfL * vx, y: cy + halfL * vy },
+      });
+    }
+    return out;
+  }
+
+  private pickChevron(tail: Vec2, tip: Vec2): Vec2[] {
+    let vx = tip.x - tail.x;
+    let vy = tip.y - tail.y;
+    const L = Math.hypot(vx, vy) || 1;
+    vx /= L;
+    vy /= L;
+    const px = -vy;
+    const py = vx;
+    const headLen = 0.5 * L;
+    const headHalf = 0.32 * L;
+    const shaftHalf = 0.09 * L;
+    const neckX = tip.x - headLen * vx;
+    const neckY = tip.y - headLen * vy;
+    const side = (x: number, y: number, s: number): Vec2 => ({ x: x + s * px, y: y + s * py });
+    return [
+      side(tail.x, tail.y, shaftHalf),
+      side(neckX, neckY, shaftHalf),
+      side(neckX, neckY, headHalf),
+      tip,
+      side(neckX, neckY, -headHalf),
+      side(neckX, neckY, -shaftHalf),
+      side(tail.x, tail.y, -shaftHalf),
+    ];
+  }
+
+  private drawFacingPick(u: Unit, map: GameMap, slot: LabelSlot, dir: Dir): void {
+    const arrows = this.facingPickArrows(u, map);
+    for (const a of arrows) if (a.dir !== dir) this.paintPickArrow(slot, a.tail, a.tip, false);
+    for (const a of arrows) if (a.dir === dir) this.paintPickArrow(slot, a.tail, a.tip, true);
+  }
+
+  private paintPickArrow(slot: LabelSlot, tail: Vec2, tip: Vec2, hot: boolean): void {
+    const ctx = this.ctx;
+    const pts = this.pickChevron(tail, tip);
+    const z = slot.z;
+    ctx.save();
+    ctx.beginPath();
+    ctx.moveTo(pts[0].x, pts[0].y);
+    for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y);
+    ctx.closePath();
+    ctx.lineJoin = "round";
+    if (hot) {
+      ctx.globalAlpha = 1;
+      ctx.strokeStyle = "rgba(6,6,10,0.95)";
+      ctx.lineWidth = Math.max(2.4, 2.8 * z);
+      ctx.stroke();
+      ctx.fillStyle = slot.accent;
+      ctx.fill();
+      ctx.strokeStyle = "rgba(255,255,255,0.95)";
+      ctx.lineWidth = Math.max(1.4, 1.5 * z);
+      ctx.stroke();
+    } else {
+      ctx.globalAlpha = 0.55;
+      ctx.strokeStyle = "rgba(6,6,10,0.95)";
+      ctx.lineWidth = Math.max(2.2, 2.4 * z);
+      ctx.stroke();
+      ctx.fillStyle = slot.accent;
+      ctx.fill();
+    }
+    ctx.restore();
+  }
+
   private facingArrow(
     u: Unit,
     map: GameMap,
     slot: LabelSlot,
     selected: boolean,
   ): { tail: Vec2; tip: Vec2; pts: Vec2[] } {
-    const h = map.heightAt(u.x, u.y);
-    const project = this.projectAt(u.x, u.y, h, u.dir, map);
-    const origin = project(0, 0, 0);
-    const ahead = project(0, 1, 0);
-    let vx = ahead.x - origin.x;
-    let vy = ahead.y - origin.y;
-    const mag = Math.hypot(vx, vy);
-    if (mag > 1e-6) {
-      vx /= mag;
-      vy /= mag;
-    } else {
-      vx = 0;
-      vy = 1;
-    }
+    const fwd = this.screenForward(u, map, u.dir);
+    const vx = fwd.x;
+    const vy = fwd.y;
     const L = Math.max(12 * FACING_ARROW_SCALE, (selected ? 28 : 22) * FACING_ARROW_SCALE * slot.z);
     const headLen = 0.5 * L;
     const headHalf = 0.32 * L;

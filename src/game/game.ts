@@ -439,6 +439,10 @@ export class Game {
           target: this.forecast?.target ?? null,
           inspect: this.inspectPos(),
           phase: this.phase,
+          facingPick:
+            this.phase === "facing" && this.facingPick
+              ? { unit: this.facingPick.unit, dir: this.facingPick.hover }
+              : null,
         },
         this.floats,
       );
