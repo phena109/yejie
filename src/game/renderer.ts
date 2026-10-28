@@ -553,6 +553,8 @@ const FEET_DROP = 2;
 const RING_RX = 12.2;
 const RING_RY = 5.4;
 const RING_DROP = 1;
+/** Facing-arrow length, including its 12px floor, as a fraction of the previous size. */
+const FACING_ARROW_SCALE = 0.725;
 /**
  * Fallback body width / billboard height, used only before a frame has cached a draw rect.
  * drawMapDoll sprites are rigDrawHeight tall and about half as wide; rigs use the same figure box.
@@ -3671,7 +3673,7 @@ export class Renderer {
       vx = 0;
       vy = 1;
     }
-    const L = Math.max(12, (selected ? 28 : 22) * slot.z);
+    const L = Math.max(12 * FACING_ARROW_SCALE, (selected ? 28 : 22) * FACING_ARROW_SCALE * slot.z);
     const headLen = 0.5 * L;
     const headHalf = 0.32 * L;
     const shaftHalf = 0.09 * L;
