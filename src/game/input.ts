@@ -95,6 +95,7 @@ export class PointerInput {
         if (this.pinchGrid) {
           this.renderer.lockGridToScreen(this.pinchGrid.x, this.pinchGrid.y, 0, c.x, c.y);
         }
+        this.renderer.settleTilt();
       }
       this.lastPinch = d;
       this.lastAngle = ang;
@@ -112,6 +113,7 @@ export class PointerInput {
       this.renderer.yaw += dx * 0.01;
       this.renderer.addPitch(dy);
       this.renderer.lockGridToScreen(g.x, g.y, 0, this.renderer.w / 2, this.renderer.h / 2);
+      this.renderer.settleTilt();
       return;
     }
     if (this.dragging) {

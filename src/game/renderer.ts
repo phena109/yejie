@@ -806,6 +806,8 @@ export class Renderer {
   private mapH = 12;
   /** Last map passed to syncMap. minZoom reads it so pinch can stop near the fitted board. */
   private boardMap: GameMap | null = null;
+  /** This tilt shrank zoom so a fitted board stays on screen. settleTilt centres after the re-pin. */
+  private tiltRefit = false;
   private readonly kingsWharf = new Image();
   /** M1 roof plate. `?bgslot` turns this off so the skyline slot can be previewed. */
   legacyPlate = true;
@@ -904,7 +906,32 @@ export class Renderer {
   }
 
   addPitch(dyPx: number): void {
+    const map = this.boardMap;
+    // lockGridToScreen drifts a fitted board ~1px per step. A strict fit
+    // then stays false, so the spill at higher pitch never refits.
+    const wasFit = map != null && this.boardFits(map, false, -16);
     this.pitch = clampPitch(this.pitch + dyPx * 0.16);
+    if (!wasFit || map == null || this.boardFits(map)) return;
+    const fit = this.fitZoom();
+    if (fit == null) return;
+    this.cam.zoom = Math.min(this.cam.zoom, fit);
+    this.tiltRefit = true;
+  }
+
+  /**
+   * Centre a board whose tilt just shrank the zoom to the fit.
+   * A zoom-in past that fit in the same gesture keeps the pinned camera.
+   */
+  settleTilt(): void {
+    if (!this.tiltRefit) return;
+    this.tiltRefit = false;
+    const map = this.boardMap;
+    const fit = this.fitZoom();
+    if (!map || fit == null || this.cam.zoom > fit * 1.001) return;
+    const b = this.boardBounds(map);
+    if (!b) return;
+    this.cam.x = (b.minX + b.maxX) / 2;
+    this.cam.y = (b.minY + b.maxY) / 2;
   }
 
   setPitch(p: number): void {
@@ -1421,10 +1448,11 @@ export class Renderer {
   }
 
   /**
-   * True when the whole board is inside the viewport at the current camera (small margin).
+   * True when the whole board is inside the viewport at the current camera.
+   * `margin` is the inset in px (default 4). Negative allows that much overshoot.
    * `widthOnly` ignores the vertical extent. Mission framing always uses the full test.
    */
-  boardFits(map: GameMap, widthOnly = false): boolean {
+  boardFits(map: GameMap, widthOnly = false, margin = 4): boolean {
     this.syncMap(map);
     const b = this.boardBounds(map);
     if (!b) return true;
@@ -1433,9 +1461,8 @@ export class Renderer {
     const right = (b.maxX - this.cam.x) * z + this.w / 2;
     const top = (b.minY - this.cam.y) * z + this.h / 2;
     const bottom = (b.maxY - this.cam.y) * z + this.h / 2;
-    const m = 4;
-    if (left < m || right > this.w - m) return false;
-    return widthOnly || (top >= m && bottom <= this.h - m);
+    if (left < margin || right > this.w - margin) return false;
+    return widthOnly || (top >= margin && bottom <= this.h - margin);
   }
 
   /**
