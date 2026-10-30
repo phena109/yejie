@@ -882,13 +882,18 @@ export class Renderer {
   private readonly statusRects: ScreenRect[] = [];
   private readonly statusMarks: StatusMark[] = [];
   /**
-   * Plate shift (dx, dy) last committed for each unit, plus the tile it was solved on.
-   * The shift is relative to that unit's own sprite (itself anchored at worldToScreen).
-   * It stays put until that unit changes tile, or the frozen rect would overlap another
-   * plate. A neighbour moving yields; this plate is not pushed aside. E icons slide
-   * off a plate instead of pushing it.
+   * Plate shift (dx, dy) last committed for each unit, keyed by the tile and the
+   * camera (yaw, pitch, zoom) it was solved under. The shift is screen pixels,
+   * valid only for that geometry, relative to the unit's own sprite (anchored at
+   * worldToScreen). It stays put until the unit changes tile, yaw/pitch/zoom
+   * change, or the frozen rect would overlap another plate. Pan (cam.x/cam.y)
+   * does not drop it. A neighbour moving yields; this plate is not pushed aside.
+   * E icons slide off a plate instead of pushing it.
    */
-  private readonly labelHold = new Map<string, { dx: number; dy: number; x: number; y: number }>();
+  private readonly labelHold = new Map<
+    string,
+    { dx: number; dy: number; x: number; y: number; yaw: number; pitch: number; zoom: number }
+  >();
   private readonly labelSeen = new Set<string>();
 
   tileH(): number {
@@ -3044,16 +3049,22 @@ export class Renderer {
     });
     const seen = this.labelSeen;
     seen.clear();
-    // Unmoved plates keep their shift and are reserved first. A unit that changed
-    // tile is solved afterwards, so its plate is the one that lifts out of the way.
+    // A held shift is screen pixels for one tile and one camera. Yaw, pitch, or
+    // zoom moves every plate, so those units are solved fresh. Pan does not.
+    // Unmoved plates stay reserved first while the camera is static. A unit that
+    // changed tile is solved afterwards, so its plate is the one that lifts.
+    const yaw = this.yaw;
+    const pitch = this.pitch;
+    const zoom = this.cam.zoom;
     const stable: number[] = [];
     const dirty: number[] = [];
     for (let k = 0; k < n; k++) {
       const i = this.labelOrder[k];
       const prev = this.labelHold.get(pool[i].id);
       const u = drawn[i];
-      if (prev && prev.x === u.x && prev.y === u.y) stable.push(i);
-      else dirty.push(i);
+      if (prev && prev.x === u.x && prev.y === u.y && prev.yaw === yaw && prev.pitch === pitch && prev.zoom === zoom) {
+        stable.push(i);
+      } else dirty.push(i);
     }
     for (const i of stable) {
       const prev = this.labelHold.get(pool[i].id)!;
@@ -3065,7 +3076,7 @@ export class Renderer {
       const i = this.labelOrder[k];
       const s = pool[i];
       const u = drawn[i];
-      this.labelHold.set(s.id, { dx: s.dx, dy: s.dy, x: u.x, y: u.y });
+      this.labelHold.set(s.id, { dx: s.dx, dy: s.dy, x: u.x, y: u.y, yaw, pitch, zoom });
       seen.add(s.id);
     }
     if (this.labelHold.size !== seen.size) {
