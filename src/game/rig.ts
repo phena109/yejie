@@ -35,7 +35,8 @@ function mats(p: Palette): Mats {
 }
 
 export function clipDuration(clip: AnimClip): number { return clip === "attack" ? ATTACK_MS : clip === "cast" ? CAST_MS : 0; }
-function activeClip(u: Unit, now: number): { clip: AnimClip; t: number } {
+/** Attack or cast while that window is open, else walk, else idle. Unit8 uses this same clip. */
+export function activeClip(u: Unit, now: number): { clip: AnimClip; t: number } {
   const d = clipDuration(u.anim);
   if (d > 0) { const clock = typeof performance !== "undefined" ? performance.now() : now; const t = (clock - u.animStart) / d; if (t < 1) return { clip: u.anim, t: Math.max(0, t) }; }
   return u.anim === "walk" ? { clip: "walk", t: (now / 280) % 1 } : { clip: "idle", t: (now / 900) % 1 };

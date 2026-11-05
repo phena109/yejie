@@ -1,8 +1,9 @@
 import type { GameMap, MapTheme } from "./map";
 import type { BoardObj } from "./objects";
-import { CHAR_H, drawRig, localToGrid, rigDrawHeight, type ProjectFn, type RigBillboard } from "./rig";
+import { activeClip, CHAR_H, drawRig, localToGrid, rigDrawHeight, type ProjectFn, type RigBillboard } from "./rig";
 import type { Dir, FloatText, Phase, Tile, Unit, Vec2 } from "./types";
 import { dirVector, factionColor, isPlayerControlled, key, nextYaw, yawDir, yawPoint } from "./types";
+import { preloadUnit8, resolveUnit8Look, unit8Frame, unit8Ready } from "./unit8";
 
 /** Diamond width at 45° yaw. Height and block scale with pitch. */
 export const TILE_W = 64;
@@ -117,7 +118,7 @@ export interface BodyStamp {
   mirror: boolean;
   /** Opaque figure on screen. The full stamp rect when the image has no bbox yet. */
   fig: ScreenRect;
-  /** "painted:<angle>", "doll", "rig", or "hero8:<sector>". */
+  /** "painted:<angle>", "doll", "rig", "hero8:<sector>", or "unit8:<look>:<clip>:<sector>". */
   view: string;
 }
 
@@ -973,6 +974,7 @@ export class Renderer {
       image.src = `./sprites/dana-${angle}.png`;
     }
     for (const id of HERO_IDS) this.loadHero8(id);
+    preloadUnit8();
     this.resize();
     this.trackCanvasPointer();
   }
@@ -2653,7 +2655,7 @@ export class Renderer {
     figureH = 0,
   ): void {
     const unitH = unitDrawHeight(z, elite);
-    // hero8 scales the opaque figure to unit height. The bitmap's own bottom centre stays on the feet.
+    // A positive figureH scales the opaque figure to unit height. The bitmap's own bottom centre stays on the feet.
     const dh = figureH > 0 ? (image.naturalHeight * unitH) / figureH : unitH;
     const dw = figureH > 0 ? (image.naturalWidth * unitH) / figureH : (dh * image.naturalWidth) / image.naturalHeight;
     const ctx = this.ctx;
@@ -2821,9 +2823,31 @@ export class Renderer {
       ctx.stroke();
     }
 
-    // Doll, painted heroine, and the rig all record an undimmed stamp inside this callback.
+    // Unit8, doll, painted heroine, and the rig all record an undimmed stamp inside this callback.
     const drawBody = (): void => {
       // Heading is world facing minus camera yaw, so the body and the ground chevron agree at any 旋轉 or twist.
+      // A ready unit8 set wins and is never flipped. Otherwise the heroine path, then the rig.
+      const look = resolveUnit8Look(u);
+      if (look && unit8Ready(look)) {
+        const clip = activeClip(u, this.time).clip;
+        const sector = this.screenSector(u);
+        const frame = unit8Frame(look, clip, sector);
+        if (frame) {
+          if (!opaqueBoxes.has(frame.image)) rememberOpaque(frame.image);
+          this.drawMapDoll(
+            u.id,
+            frame.image,
+            x,
+            feetY,
+            z,
+            elite,
+            false,
+            `unit8:${look}:${clip}:${sector}`,
+            frame.figureH,
+          );
+          return;
+        }
+      }
       const id = isHeroId(u.archetype) ? u.archetype : null;
       if (id) {
         const picked = this.heroView(id, this.screenSector(u));

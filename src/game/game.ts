@@ -2061,6 +2061,7 @@ export class Game {
   private installDebugHook(): void {
     if (!this.debugHooksEnabled()) return;
     window.__yejieDebug = {
+      game: this,
       forceWin: () => {
         this.win();
       },
