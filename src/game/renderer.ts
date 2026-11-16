@@ -3,7 +3,7 @@ import type { BoardObj } from "./objects";
 import { activeClip, CHAR_H, drawRig, localToGrid, rigDrawHeight, type ProjectFn, type RigBillboard } from "./rig";
 import type { Dir, FloatText, Phase, Tile, Unit, Vec2 } from "./types";
 import { dirVector, factionColor, isPlayerControlled, key, nextYaw, yawDir, yawPoint } from "./types";
-import { preloadUnit8, resolveUnit8Look, unit8Frame, unit8Ready } from "./unit8";
+import { preloadUnit8, resolveUnit8Look, unit8BodyScale, unit8Frame, unit8Ready } from "./unit8";
 
 /** Diamond width at 45° yaw. Height and block scale with pitch. */
 export const TILE_W = 64;
@@ -2653,8 +2653,9 @@ export class Renderer {
     mirrored: boolean,
     view: string,
     figureH = 0,
+    bodyScale = 1,
   ): void {
-    const unitH = unitDrawHeight(z, elite);
+    const unitH = unitDrawHeight(z, elite) * bodyScale;
     // A positive figureH scales the opaque figure to unit height. The bitmap's own bottom centre stays on the feet.
     const dh = figureH > 0 ? (image.naturalHeight * unitH) / figureH : unitH;
     const dw = figureH > 0 ? (image.naturalWidth * unitH) / figureH : (dh * image.naturalWidth) / image.naturalHeight;
@@ -2844,6 +2845,7 @@ export class Renderer {
             false,
             `unit8:${look}:${clip}:${sector}`,
             frame.figureH,
+            unit8BodyScale(look),
           );
           return;
         }

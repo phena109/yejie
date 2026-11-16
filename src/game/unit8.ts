@@ -213,3 +213,8 @@ export function unit8Frame(
   if (!frame) return null;
   return { image: frame.image, figureH: state.figureH };
 }
+
+/** Painted body draw scale for a resolved unit8 look. Crosby cancels elite inflation (1/1.12) so the painted body is 58px at zoom 1. Every other look, including thug-m, is 1. */
+export function unit8BodyScale(look: string): number {
+  return look === "crosby" ? 1 / 1.12 : 1;
+}
